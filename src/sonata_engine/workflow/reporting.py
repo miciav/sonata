@@ -26,38 +26,6 @@ def phase(label: str) -> None:
     _emit(build_phase_event(label, context=get_workflow_context()))
 
 
-def step(label: str, detail: str = "") -> None:
-    _emit(
-        build_task_event(
-            kind="task.running", title=label, detail=detail, context=get_workflow_context()
-        )
-    )
-
-
-def success(label: str, detail: str = "") -> None:
-    _emit(
-        build_task_event(
-            kind="task.completed", title=label, detail=detail, context=get_workflow_context()
-        )
-    )
-
-
-def warning(label: str) -> None:
-    _emit(build_task_event(kind="task.warning", title=label, context=get_workflow_context()))
-
-
-def skip(label: str) -> None:
-    _emit(build_task_event(kind="task.skipped", title=label, context=get_workflow_context()))
-
-
-def fail(label: str, detail: str = "") -> None:
-    _emit(
-        build_task_event(
-            kind="task.failed", title=label, detail=detail, context=get_workflow_context()
-        )
-    )
-
-
 def workflow_log(
     message: str, *, stream: str = "stdout", context: WorkflowContext | None = None
 ) -> None:
@@ -88,6 +56,53 @@ def _child_context(
         parent_task_id=resolved_parent,
         task_run_id=active.task_run_id,
     )
+
+
+@contextmanager
+def task_lifecycle(
+    *, task_id: str, title: str = "", context: WorkflowContext | None = None
+) -> Generator[WorkflowContext, None, None]:
+    """Emit `task.started` on entry, then `task.passed` or `task.failed` on exit.
+
+    Used exclusively by `Workflow.run_compiled` -- the compiled-task runner --
+    so lifecycle identity for a `CompiledTask` is owned by the runner, not by
+    the task's own `run()` body.
+    """
+    child = _child_context(task_id=task_id, parent_task_id=None, context=context)
+    _emit(
+        build_task_event(
+            kind="task.started",
+            task_id=task_id,
+            parent_task_id=child.parent_task_id,
+            title=title,
+            context=child,
+        )
+    )
+    with bind_workflow_context(child):
+        try:
+            yield child
+        except Exception as exc:
+            _emit(
+                build_task_event(
+                    kind="task.failed",
+                    task_id=task_id,
+                    parent_task_id=child.parent_task_id,
+                    title=title,
+                    detail=str(exc),
+                    context=child,
+                )
+            )
+            raise
+        else:
+            _emit(
+                build_task_event(
+                    kind="task.passed",
+                    task_id=task_id,
+                    parent_task_id=child.parent_task_id,
+                    title=title,
+                    context=child,
+                )
+            )
 
 
 @contextmanager

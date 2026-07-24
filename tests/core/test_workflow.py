@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Generator
 
 import pytest
 
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import Task
-from sonata_engine.core.workflow import Workflow
+from sonata_engine.core.workflow import InvalidTaskOutcomeError, Workflow
+from sonata_engine.workflow.context import bind_workflow_sink
+from sonata_engine.workflow.events import WorkflowEvent
 
 
 class _NoopTask(Task[None]):
@@ -223,3 +227,91 @@ def test_compile_requires_non_empty_workflow_id() -> None:
 
     with pytest.raises(ValueError, match="workflow_id"):
         workflow.compile()
+
+
+# --- run_compiled(): lifecycle events -------------------------------------
+
+
+class _FakeSink:
+    def __init__(self) -> None:
+        self.events: list[WorkflowEvent] = []
+
+    def emit(self, event: WorkflowEvent) -> None:
+        self.events.append(event)
+
+    @contextmanager
+    def status(self, label: str) -> Generator[None, None, None]:
+        yield
+
+
+class _BoomTask(Task[None]):
+    title = "Boom"
+
+    def run(self) -> TaskOutcome[None]:
+        raise RuntimeError("boom")
+
+
+class _BadOutcomeTask(Task[None]):
+    title = "Bad outcome"
+
+    def run(self) -> TaskOutcome[None]:
+        return "not-an-outcome"  # type: ignore[return-value]
+
+
+def test_run_compiled_emits_started_then_passed() -> None:
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_NoopTask("Prepare source"))
+    compiled = workflow.compile()
+
+    sink = _FakeSink()
+    with bind_workflow_sink(sink):
+        workflow.run_compiled(compiled)
+
+    assert [e.kind for e in sink.events] == ["task.started", "task.passed"]
+    assert all(e.task_id == "001.prepare-source" for e in sink.events)
+
+
+def test_run_compiled_emits_failed_on_exception_and_propagates() -> None:
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_BoomTask())
+    compiled = workflow.compile()
+
+    sink = _FakeSink()
+    with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom"):
+        workflow.run_compiled(compiled)
+
+    assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
+    assert all(e.task_id == "001.boom" for e in sink.events)
+
+
+def test_run_compiled_rejects_non_task_outcome_result() -> None:
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_BadOutcomeTask())
+    compiled = workflow.compile()
+
+    sink = _FakeSink()
+    with bind_workflow_sink(sink), pytest.raises(InvalidTaskOutcomeError):
+        workflow.run_compiled(compiled)
+
+    assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
+
+
+def test_run_compiled_stops_on_first_failure() -> None:
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_BoomTask())
+    workflow.add(_NoopTask("Never runs"))
+    compiled = workflow.compile()
+
+    sink = _FakeSink()
+    with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom"):
+        workflow.run_compiled(compiled)
+
+    assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
+
+
+def test_run_compiled_is_noop_safe_without_sink() -> None:
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_NoopTask("Prepare source"))
+    compiled = workflow.compile()
+
+    workflow.run_compiled(compiled)  # no sink bound, must not raise

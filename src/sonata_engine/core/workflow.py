@@ -5,11 +5,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
+from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import ResourceTask
 from sonata_engine.core.task import Task
-from sonata_engine.workflow.reporting import workflow_step
+from sonata_engine.workflow.reporting import task_lifecycle, workflow_step
 
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
+
+
+class InvalidTaskOutcomeError(Exception):
+    """Raised when a compiled task's `run()` returns something other than `TaskOutcome`."""
 
 
 def _slugify(title: str) -> str:
@@ -91,6 +96,23 @@ class Workflow:
 
         if cleanup_errors:
             raise RuntimeError("Cleanup failed:\n" + "\n".join(cleanup_errors))
+
+    def run_compiled(self, compiled: CompiledWorkflow) -> None:
+        """Run a `CompiledWorkflow`'s tasks in order, owning their lifecycle events.
+
+        Each task emits `task.started`, then `task.passed` on a valid
+        `TaskOutcome` result or `task.failed` on an exception (including a
+        rejected, non-`TaskOutcome` result). Fails fast: the first failure
+        stops execution and propagates. No cleanup/resource handling exists
+        at this level yet.
+        """
+        for compiled_task in compiled.tasks:
+            with task_lifecycle(task_id=compiled_task.task_id, title=compiled_task.task.title):
+                outcome = compiled_task.task.run()
+                if not isinstance(outcome, TaskOutcome):
+                    raise InvalidTaskOutcomeError(
+                        f"{compiled_task.task_id} returned {outcome!r}, expected TaskOutcome"
+                    )
 
     def add(self, task: Task[Any]) -> Workflow:
         """Record a task definition. Ordering is preserved for `compile()`."""
