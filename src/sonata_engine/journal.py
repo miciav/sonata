@@ -2,7 +2,8 @@
 
 The journal records the lifecycle of a compiled workflow so an interrupted run can
 resume. Storage is one JSON object per line; a single logical task (`task_id`) can
-own several physical attempt records. Schema v2 stores only generic
+own several physical attempt records. Recovery truncates only a malformed,
+non-newline-terminated final record left by an interrupted append. Schema v2 stores only generic
 workflow/task/attempt/evidence data -- no release identity, semantic versions,
 registries, or artifact policy (those do not belong in Sonata).
 """

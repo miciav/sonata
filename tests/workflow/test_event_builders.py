@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from sonata_engine.workflow.event_builders import (
-    build_log_event,
-    build_phase_event,
-    build_task_event,
-)
+from sonata_engine.workflow.event_builders import build_log_event, build_task_event
 from sonata_engine.workflow.events import WorkflowContext
 
 
@@ -33,12 +29,6 @@ def test_build_task_event_explicit_overrides_context() -> None:
 def test_build_task_event_falls_back_title_to_task_id() -> None:
     event = build_task_event(kind="task.completed", task_id="my-task")
     assert event.title == "my-task"
-
-
-def test_build_phase_event() -> None:
-    event = build_phase_event("Provisioning")
-    assert event.kind == "phase.started"
-    assert event.title == "Provisioning"
 
 
 def test_build_log_event_default_stream_stdout() -> None:
@@ -76,3 +66,9 @@ def test_build_log_event_preserves_parent_from_context() -> None:
     )
     assert event.task_id == "images.build"
     assert event.parent_task_id == "tests.run_checks"
+
+
+def test_phase_event_builder_is_not_public() -> None:
+    import sonata_engine.workflow.event_builders as builders
+
+    assert not hasattr(builders, "build_phase_event")

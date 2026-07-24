@@ -59,32 +59,6 @@ def build_task_event(
     )
 
 
-def build_phase_event(
-    label: str,
-    *,
-    flow_id: str | None = None,
-    flow_run_id: str | None = None,
-    context: WorkflowContext | None = None,
-) -> WorkflowEvent:
-    resolved = _resolve_context_fields(
-        flow_id=flow_id,
-        flow_run_id=flow_run_id,
-        task_id=None,
-        parent_task_id=None,
-        task_run_id=None,
-        context=context,
-    )
-    return WorkflowEvent(
-        kind="phase.started",
-        flow_id=resolved[0],
-        flow_run_id=resolved[1],
-        task_id=resolved[2],
-        parent_task_id=resolved[3],
-        task_run_id=resolved[4],
-        title=label,
-    )
-
-
 def build_log_event(
     *,
     line: str,

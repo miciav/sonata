@@ -312,7 +312,7 @@ def test_load_skips_blank_lines(tmp_path: Path) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write("\n")  # blank line between attempts, must not break parsing
 
-    # A fresh Journal (via a second run_compiled) re-reads the file including the
+    # A fresh Journal (via a second run) re-reads the file including the
     # blank line; a second, ordinary (non-reusable) task run must still succeed.
     workflow.run( journal=config)
     records = _records(path)

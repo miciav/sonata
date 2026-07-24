@@ -39,7 +39,6 @@ select = ["ANN", "E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN"]
-"src/sonata_engine/core/task.py" = ["ANN401"] # Removed by v2 TaskOutcome migration.
 
 [tool.basedpyright]
 include = ["src/sonata_engine"]

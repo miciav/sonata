@@ -8,6 +8,10 @@
 
 **Tech Stack:** Python 3.12, uv, pytest, Ruff, Basedpyright, dataclasses, JSON Lines journals.
 
+**Implementation status (2026-07-24):** Sonata tasks 1–7 are implemented and hardened.
+The nanoFaaS integration and release scenario in tasks 8–12 remain a separate
+downstream change; Sonata contains no release-specific task or policy.
+
 ---
 
 ## Decisions and invariants
@@ -125,6 +129,8 @@ workflow.add(PushLocalImage(...), requires=(builder_vm, registry_tunnel))
   generated IDs.
 - Release operations always run after acquisition, including after a consumer failure,
   and execute in reverse acquisition order.
+- Acquisition is non-idempotent by default. A resource must explicitly set
+  `acquire_idempotent=True` before a failed or interrupted acquire may be retried.
 - Release/finalizer tasks are never journal-reused.
 - `keep_infrastructure` may retain explicitly marked infrastructure resources but must
   not retain safety resources such as secret mounts or port forwards.
@@ -143,12 +149,18 @@ workflow.run(
 - Journal is optional.
 - `resume=True` without a journal raises `ResumeConfigurationError`.
 - The engine creates journal state from the compiled topology. Five compiled tasks
-  produce five logical task entries.
+  produce five logical attempt-0 `pending` entries before the first task runs.
 - Storage is append-only JSON Lines. A logical task can have multiple physical attempt
-  records.
+  records. Recovery may truncate only a malformed final record without a newline;
+  malformed complete or interior records raise `CorruptJournalError`.
+- Every record carries a deterministic fingerprint of the workflow ID and ordered
+  `(task_id, kind, task class)` topology. A missing or different fingerprint raises
+  `WorkflowTopologyMismatchError`; there is no compatibility fallback.
 - The workflow automatically records `started`, `passed`, `failed`, `skipped`, and
   finalizer outcomes. Tasks and scenarios never call the journal.
-- A passed reusable task is skipped only when all recorded evidence is verified.
+- A passed reusable task is skipped only when it has non-empty evidence and every
+  entry is verified. Sonata supplies only `file-digest`; all other evidence kinds
+  require an injected verifier.
 - Passed non-reusable tasks run again.
 - `started` without a terminal record is ambiguous:
   - idempotent task: append a new attempt and rerun;
@@ -163,6 +175,7 @@ Example record:
 {
   "schema_version": 2,
   "workflow_id": "release",
+  "workflow_fingerprint": "sha256:...",
   "run_id": "01J...",
   "task_id": "002.build-amd64",
   "attempt": 1,
@@ -192,6 +205,8 @@ Example record:
   TUI.
 - Five compiled tasks create five logical journal entries.
 - Verified reusable tasks skip; stale evidence forces execution.
+- Empty evidence and unregistered evidence kinds never permit reuse.
+- Changed workflow topology or task types cannot reuse an existing journal.
 - Ambiguous idempotent tasks rerun; ambiguous non-idempotent tasks fail closed.
 - Resource finalizers execute automatically on success and failure.
 - Existing nanoFaaS workflows and the new release scenario pass without compatibility
@@ -467,12 +482,13 @@ Also assert `resume=True` without `JournalConfig` fails and schema v1 is rejecte
 **Step 4: Implement JSON Lines storage**
 
 Use the standard library only. Parse all records into task/attempt state before
-execution. Write atomically per appended line and flush before task execution.
+execution. Initialize the complete topology as `pending`, append and flush each
+record, and fsync the pre-execution `started` record.
 
 **Step 5: Implement evidence verification as an injected registry**
 
-Ship only exact-value and file-digest verifiers required by tests. Domain-specific OCI
-or release verification stays in nanoFaaS.
+Ship only the `file-digest` verifier. `exact-value` and domain-specific OCI or release
+verification require explicitly injected downstream verifiers.
 
 **Step 6: Verify and commit**
 

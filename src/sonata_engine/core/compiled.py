@@ -23,7 +23,7 @@ class CompiledTask(Generic[T]):
 
     `kind` discriminates ordinary consumer units from the acquire/release units
     the compiler splices in for resources. For an `acquire`/`release` unit,
-    `resource` names which `Resource` it belongs to, letting `run_compiled`
+    `resource` names which `Resource` it belongs to, letting the runner
     pair a release with its acquire and release out of linear order on failure.
     """
 

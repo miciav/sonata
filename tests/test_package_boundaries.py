@@ -8,6 +8,8 @@ import ast
 import tomllib
 from pathlib import Path
 
+import sonata_engine
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = REPO_ROOT / "src" / "sonata_engine"
 
@@ -51,3 +53,16 @@ def test_no_runtime_dependencies() -> None:
         pyproject = tomllib.load(f)
 
     assert pyproject["project"]["dependencies"] == []
+
+
+def test_root_exports_the_v2_contract() -> None:
+    expected = {
+        "CorruptJournalError",
+        "TaskExecution",
+        "TaskOutcome",
+        "Workflow",
+        "WorkflowResult",
+        "WorkflowTopologyMismatchError",
+    }
+
+    assert expected <= set(sonata_engine.__all__)

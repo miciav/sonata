@@ -10,7 +10,6 @@ from sonata_engine.workflow.context import (
 )
 from sonata_engine.workflow.event_builders import (
     build_log_event,
-    build_phase_event,
     build_task_event,
 )
 from sonata_engine.workflow.events import WorkflowContext, WorkflowEvent
@@ -20,10 +19,6 @@ def _emit(event: WorkflowEvent) -> None:
     sink = active_sink()
     if sink is not None:
         sink.emit(event)
-
-
-def phase(label: str) -> None:
-    _emit(build_phase_event(label, context=get_workflow_context()))
 
 
 def workflow_log(
@@ -59,14 +54,13 @@ def _child_context(
 
 
 @contextmanager
-def task_lifecycle(
+def _task_lifecycle(
     *, task_id: str, title: str = "", context: WorkflowContext | None = None
 ) -> Generator[WorkflowContext, None, None]:
     """Emit `task.started` on entry, then `task.passed` or `task.failed` on exit.
 
-    Used exclusively by `Workflow.run_compiled` -- the compiled-task runner --
-    so lifecycle identity for a `CompiledTask` is owned by the runner, not by
-    the task's own `run()` body.
+    Used exclusively by the compiled-task runner, so lifecycle identity for a
+    `CompiledTask` is owned by the engine, not by the task's own `run()` body.
     """
     child = _child_context(task_id=task_id, parent_task_id=None, context=context)
     _emit(
@@ -105,7 +99,7 @@ def task_lifecycle(
             )
 
 
-def task_skipped(
+def _task_skipped(
     *, task_id: str, title: str = "", context: WorkflowContext | None = None
 ) -> None:
     """Emit the runner-owned terminal event for a task that was not executed."""
@@ -119,51 +113,3 @@ def task_skipped(
             context=child,
         )
     )
-
-
-@contextmanager
-def workflow_step(
-    *,
-    task_id: str,
-    title: str,
-    parent_task_id: str | None = None,
-    detail: str = "",
-    context: WorkflowContext | None = None,
-) -> Generator[WorkflowContext, None, None]:
-    child = _child_context(task_id=task_id, parent_task_id=parent_task_id, context=context)
-    _emit(
-        build_task_event(
-            kind="task.running",
-            task_id=task_id,
-            parent_task_id=child.parent_task_id,
-            title=title,
-            detail=detail,
-            context=child,
-        )
-    )
-    with bind_workflow_context(child):
-        try:
-            yield child
-        except BaseException as exc:
-            _emit(
-                build_task_event(
-                    kind="task.failed",
-                    task_id=task_id,
-                    parent_task_id=child.parent_task_id,
-                    title=title,
-                    detail=detail or str(exc),
-                    context=child,
-                )
-            )
-            raise
-        else:
-            _emit(
-                build_task_event(
-                    kind="task.completed",
-                    task_id=task_id,
-                    parent_task_id=child.parent_task_id,
-                    title=title,
-                    detail=detail,
-                    context=child,
-                )
-            )

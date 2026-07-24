@@ -17,7 +17,7 @@ from sonata_engine.core.resource_task import Resource, ResourceOp
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import InvalidTaskOutcomeError, ResumeConfigurationError
 from sonata_engine.journal import Journal, JournalConfig, Verifier
-from sonata_engine.workflow.reporting import task_lifecycle, task_skipped
+from sonata_engine.workflow.reporting import _task_lifecycle, _task_skipped
 
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 
@@ -140,13 +140,10 @@ class Workflow:
     ) -> TaskExecution:
         """Run one consumer/acquire unit, recording its journal outcome. Raises on failure.
 
-        Only `consumer` units consult prior journal state for a skip/retry decision.
-        Acquire units have no `idempotent` signal of their own, so a `passed` acquire
-        always reruns (matches "passed non-reusable tasks run again", same as any
-        ordinary task); but an interrupted (`started`-only) acquire is guarded --
-        its actual completion is unknown, so it must not be blindly retried.
-        Releases are handled separately by `_release`. The resume decision may raise
-        `AmbiguousTaskStateError` before anything executes.
+        Consumers and acquire units consult the same resume decision matrix.
+        `Resource.acquire_idempotent` controls whether an interrupted or failed
+        acquire can retry; a passed acquire always reruns because it is non-reusable.
+        Releases are handled separately by `_release`.
 
         A journal-write failure here is allowed to propagate (treated like any other
         task failure) -- unlike `_release`, which must keep attempting every pending
@@ -157,7 +154,7 @@ class Workflow:
         if jrnl is not None and resume:
             if jrnl.decide(compiled_task) == "skip":
                 jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-                task_skipped(task_id=task_id, title=task.title)
+                _task_skipped(task_id=task_id, title=task.title)
                 return TaskExecution(task_id=task_id, status="skipped", outcome=None)
 
         attempt = self._next_attempt(jrnl, task_id)
@@ -165,7 +162,7 @@ class Workflow:
             # Flush the started record BEFORE executing, so a crash mid-task is durable.
             jrnl.record_started(task_id, attempt)
         try:
-            with task_lifecycle(task_id=task_id, title=task.title):
+            with _task_lifecycle(task_id=task_id, title=task.title):
                 outcome = task.run()
                 if on_executed is not None:
                     on_executed()
@@ -219,7 +216,7 @@ class Workflow:
                     ),
                 )
             try:
-                task_skipped(
+                _task_skipped(
                     task_id=compiled_task.task_id,
                     title=compiled_task.task.title,
                 )
@@ -233,7 +230,7 @@ class Workflow:
                 release_errors, lambda: jrnl.record_started(task_id, attempt)
             )
         try:
-            with task_lifecycle(task_id=task_id, title=compiled_task.task.title):
+            with _task_lifecycle(task_id=task_id, title=compiled_task.task.title):
                 outcome = compiled_task.task.run()
                 if not isinstance(outcome, TaskOutcome):
                     raise InvalidTaskOutcomeError(
