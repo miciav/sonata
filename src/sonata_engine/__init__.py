@@ -54,10 +54,10 @@ __all__ = [
     "Workflow",
     "WorkflowContext",
     "WorkflowEvent",
+    "WorkflowResult",
     "WorkflowRun",
     "WorkflowSink",
     "WorkflowState",
     "WorkflowTopologyMismatchError",
-    "WorkflowResult",
     "__version__",
 ]

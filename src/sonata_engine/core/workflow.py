@@ -79,7 +79,7 @@ class Workflow:
         if resume and journal is None:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
         jrnl = (
-            Journal(journal, compiled, verifiers) if journal is not None else None
+            Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
         )
 
         release_for = {ct.resource: ct for ct in compiled.tasks if ct.kind == "release"}

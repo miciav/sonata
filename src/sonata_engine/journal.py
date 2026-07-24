@@ -164,11 +164,15 @@ class Journal:
     Intended model: one journal file per workflow. `_load()` defensively filters
     records by `workflow_id` in case a file is ever shared across workflows.
 
-    The constructor receives the complete compiled workflow, validates its
-    deterministic fingerprint against every existing record, including each reusable
-    task's semantic key, and creates attempt-0 `pending` records for every task
-    missing from the journal. Resume therefore refuses changed definitions instead
-    of reusing evidence under a stale task ID.
+    The constructor receives the complete compiled workflow and, only when
+    `resume=True`, validates its deterministic fingerprint against every existing
+    record, including each reusable task's semantic key -- resume refuses changed
+    definitions instead of reusing evidence under a stale task ID. A non-resuming
+    run treats fingerprint-mismatched records as belonging to a different workflow
+    shape (same handling as a `workflow_id` mismatch): it simply ignores them
+    rather than raising, since it never consults recorded state for a skip/retry
+    decision anyway. Either way, attempt-0 `pending` records are created for every
+    task missing from the (filtered) journal state.
     """
 
     def __init__(
@@ -176,10 +180,13 @@ class Journal:
         config: JournalConfig,
         compiled: CompiledWorkflow,
         verifiers: Mapping[str, Verifier] | None = None,
+        *,
+        resume: bool = False,
     ) -> None:
         self.path = config.path
         self.workflow_id = compiled.workflow_id
         self.workflow_fingerprint = compiled.fingerprint
+        self._resume = resume
         # ponytail: uuid4 hex, not a ULID -- unique-per-run is all we need, no new dep.
         self.run_id = uuid.uuid4().hex
         self.verifiers = _resolve_verifiers(verifiers)
@@ -234,10 +241,12 @@ class Journal:
                 continue
             fingerprint = record.get("workflow_fingerprint")
             if fingerprint != self.workflow_fingerprint:
-                raise WorkflowTopologyMismatchError(
-                    f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
-                    f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
-                )
+                if self._resume:
+                    raise WorkflowTopologyMismatchError(
+                        f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
+                        f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
+                    )
+                continue
             try:
                 task_id = str(record["task_id"])
                 attempt = int(record["attempt"])
@@ -334,6 +343,6 @@ class Journal:
                 # Only the pre-execution record needs disk-level durability: it's the
                 # one a crash mid-task must leave behind. Terminal records losing their
                 # fsync race just look like `started` on the next resume, which
-                # guard_not_ambiguous/decide_resume already handle safely.
+                # decide_resume already handles safely.
                 os.fsync(handle.fileno())
         self._states[task_id] = TaskState(task_id, attempt, status, evidence)

@@ -166,6 +166,26 @@ def test_changed_ordered_topology_rejects_existing_journal(tmp_path: Path) -> No
         changed.run(journal=config, resume=True)
 
 
+def test_changed_topology_does_not_reject_a_non_resuming_run(tmp_path: Path) -> None:
+    """Fingerprint mismatch only matters for `resume=True` -- it exists to stop resume
+    from reusing evidence under a stale task ID. A fresh (non-resuming) run pointed at
+    a journal file left over from a differently-shaped workflow must not be blocked;
+    mismatched records are simply ignored, the same as a `workflow_id` mismatch."""
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    original = Workflow(workflow_id="wf")
+    original.add(_Ok("Build"))
+    original.run(journal=config)
+
+    changed = Workflow(workflow_id="wf")
+    changed.add(_Ok("Prepare"))
+    changed.add(_Ok("Build"))
+
+    changed.run(journal=config)  # resume=False (default) -- must not raise
+
+    records = [r for r in _records(config.path) if r["task_id"] == "001.prepare"]
+    assert any(r["status"] == "passed" for r in records)
+
+
 def test_record_without_fingerprint_is_not_backward_compatible(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     config.path.write_text(
