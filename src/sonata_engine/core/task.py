@@ -1,18 +1,35 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from abc import ABC, abstractmethod
+from typing import Generic, TypeVar, override
+
+from sonata_engine.core.outcome import TaskOutcome
+
+T = TypeVar("T")
 
 
-@runtime_checkable
-class Task(Protocol):
-    """Protocol that all composable workflow tasks must satisfy.
+class Task(Generic[T], ABC):
+    """Base class for composable workflow tasks.
 
-    Implementations are typically dataclasses with explicit constructor
-    parameters. The task_id must be stable across runs (used for TUI
-    phase tracking and workflow_step context).
+    Subclasses must implement `run` and return a `TaskOutcome[T]`; the
+    outcome's `value` is an in-process data channel and is never
+    serialized by the journal.
     """
 
-    task_id: str
     title: str
+    idempotent: bool = False
 
-    def run(self) -> Any: ...
+    @abstractmethod
+    def run(self) -> TaskOutcome[T]:
+        raise NotImplementedError
+
+
+class ReusableTask(Task[None], ABC):
+    """A task with no mutable result channel, eligible for skip-on-verified-evidence."""
+
+    reusable: bool = True
+
+    @override
+    @abstractmethod
+    def run(self) -> TaskOutcome[None]:
+        raise NotImplementedError

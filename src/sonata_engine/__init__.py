@@ -1,6 +1,6 @@
 """Sonata workflow engine."""
 
-from sonata_engine.core import ResourceTask, Task, Workflow
+from sonata_engine.core import Evidence, ResourceTask, ReusableTask, Task, TaskOutcome, Workflow
 from sonata_engine.workflow import (
     TaskDefinition,
     TaskRun,
@@ -14,9 +14,12 @@ from sonata_engine.workflow import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "Evidence",
     "ResourceTask",
+    "ReusableTask",
     "Task",
     "TaskDefinition",
+    "TaskOutcome",
     "TaskRun",
     "Workflow",
     "WorkflowContext",
