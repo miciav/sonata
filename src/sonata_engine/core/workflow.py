@@ -78,7 +78,7 @@ class Workflow:
         if resume and journal is None:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
         jrnl = (
-            Journal(journal, compiled.workflow_id, verifiers) if journal is not None else None
+            Journal(journal, compiled, verifiers) if journal is not None else None
         )
 
         release_for = {ct.resource: ct for ct in compiled.tasks if ct.kind == "release"}
@@ -195,6 +195,10 @@ class Workflow:
         """
         resource = compiled_task.resource
         if self.keep_infrastructure and resource is not None and resource.infrastructure:
+            if jrnl is not None:
+                jrnl.record_skipped(
+                    compiled_task.task_id, jrnl.next_attempt(compiled_task.task_id)
+                )
             return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)

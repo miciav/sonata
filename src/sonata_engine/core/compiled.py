@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar
 
@@ -38,6 +40,24 @@ class CompiledWorkflow:
 
     workflow_id: str
     tasks: tuple[CompiledTask[object], ...]
+
+    @property
+    def fingerprint(self) -> str:
+        """Deterministic identity of the ordered compiled topology."""
+        topology = [
+            (
+                task.task_id,
+                task.kind,
+                f"{type(task.task).__module__}.{type(task.task).__qualname__}",
+            )
+            for task in self.tasks
+        ]
+        canonical = json.dumps(
+            [self.workflow_id, topology],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode()
+        return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
 
 
 @dataclass(frozen=True, slots=True)

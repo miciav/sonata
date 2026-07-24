@@ -19,10 +19,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from sonata_engine.core.compiled import CompiledTask
+from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
 from sonata_engine.core.outcome import Evidence
 from sonata_engine.core.task import ReusableTask
-from sonata_engine.errors import AmbiguousTaskStateError, UnsupportedJournalSchemaError
+from sonata_engine.errors import (
+    AmbiguousTaskStateError,
+    UnsupportedJournalSchemaError,
+    WorkflowTopologyMismatchError,
+)
 
 SCHEMA_VERSION = 2
 
@@ -96,13 +100,13 @@ def decide_resume(
 ) -> ResumeAction:
     """Decide whether to run or skip a consumer task given its prior recorded state.
 
-    - No prior record: run fresh.
+    - No prior record, or a topology-initialized `pending` record: run fresh.
     - Done (passed/skipped): a reusable task whose every evidence entry verifies is
       skipped; anything else (ordinary task, or stale/unverifiable evidence) reruns.
     - Interrupted after `started`, or genuinely `failed`: an idempotent task may retry
       safely; a non-idempotent task cannot be resumed automatically -> raise.
     """
-    if prior is None:
+    if prior is None or prior.status == "pending":
         return "run"
     if prior.status in ("passed", "skipped"):
         if reusable and _all_verified(prior.evidence, verifiers):
@@ -152,23 +156,21 @@ class Journal:
     Intended model: one journal file per workflow. `_load()` defensively filters
     records by `workflow_id` in case a file is ever shared across workflows.
 
-    Resume assumes the workflow definition is unchanged between the run that wrote
-    the journal and the run that resumes it: `task_id` is `{ordinal:03d}.{slug}`
-    (see `Workflow.compile()`), derived only from position and title, with no
-    content-based identity. Inserting, removing, or reordering tasks between runs
-    can make a resumed run silently miss a skip it should get, or -- if an unrelated
-    new task happens to land at the same ordinal with a same-slugging title --
-    incorrectly reuse a prior task's evidence for a task that never actually ran.
+    The constructor receives the complete compiled workflow, validates its
+    deterministic fingerprint against every existing record, and creates attempt-0
+    `pending` records for every task missing from the journal. Resume therefore
+    refuses changed topologies instead of reusing evidence under a stale task ID.
     """
 
     def __init__(
         self,
         config: JournalConfig,
-        workflow_id: str,
+        compiled: CompiledWorkflow,
         verifiers: Mapping[str, Verifier] | None = None,
     ) -> None:
         self.path = config.path
-        self.workflow_id = workflow_id
+        self.workflow_id = compiled.workflow_id
+        self.workflow_fingerprint = compiled.fingerprint
         # ponytail: uuid4 hex, not a ULID -- unique-per-run is all we need, no new dep.
         self.run_id = uuid.uuid4().hex
         self.verifiers = _resolve_verifiers(verifiers)
@@ -176,6 +178,9 @@ class Journal:
         # started_at captured per attempt so the terminal record can repeat it.
         self._started_at: dict[tuple[str, int], str] = {}
         self._states = self._load()
+        for task in compiled.tasks:
+            if task.task_id not in self._states:
+                self._write(task.task_id, 0, "pending")
 
     def _load(self) -> dict[str, TaskState]:
         states: dict[str, TaskState] = {}
@@ -192,6 +197,12 @@ class Journal:
                 )
             if record.get("workflow_id") != self.workflow_id:
                 continue
+            fingerprint = record.get("workflow_fingerprint")
+            if fingerprint != self.workflow_fingerprint:
+                raise WorkflowTopologyMismatchError(
+                    f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
+                    f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
+                )
             task_id = record["task_id"]
             attempt = record["attempt"]
             existing = states.get(task_id)
@@ -266,6 +277,7 @@ class Journal:
         record = {
             "schema_version": SCHEMA_VERSION,
             "workflow_id": self.workflow_id,
+            "workflow_fingerprint": self.workflow_fingerprint,
             "run_id": self.run_id,
             "task_id": task_id,
             "attempt": attempt,

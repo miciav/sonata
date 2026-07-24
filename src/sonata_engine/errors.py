@@ -21,3 +21,7 @@ class AmbiguousTaskStateError(Exception):
 
 class UnsupportedJournalSchemaError(Exception):
     """Raised when a journal record declares a `schema_version` this engine cannot read."""
+
+
+class WorkflowTopologyMismatchError(Exception):
+    """Raised when a journal belongs to a different compiled workflow topology."""

@@ -56,10 +56,12 @@ def _seed(
     evidence: tuple[Evidence, ...] = (),
     workflow_id: str = "wf",
     schema_version: int = 2,
+    workflow_fingerprint: str | None = None,
 ) -> None:
     record = {
         "schema_version": schema_version,
         "workflow_id": workflow_id,
+        "workflow_fingerprint": workflow_fingerprint,
         "run_id": "seed",
         "task_id": task_id,
         "attempt": attempt,
@@ -74,6 +76,12 @@ def _seed(
         handle.write(json.dumps(record) + "\n")
 
 
+def _fingerprint(task: Task[None]) -> str:
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(task)
+    return workflow.compile().fingerprint
+
+
 def _run(task: Task[None], config: JournalConfig, **kwargs: object) -> None:
     workflow = Workflow(workflow_id="wf")
     workflow.add(task)
@@ -85,8 +93,14 @@ def _run(task: Task[None], config: JournalConfig, **kwargs: object) -> None:
 
 def test_passed_valid_evidence_reusable_skips(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "passed", evidence=(Evidence("exact-value", "v1.2.3"),))
     task = _ReusableTracker("Build", evidence=(Evidence("exact-value", "v1.2.3"),))
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("exact-value", "v1.2.3"),),
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     _run(task, config, resume=True)
 
@@ -99,13 +113,14 @@ def test_passed_valid_file_digest_reusable_skips(tmp_path: Path) -> None:
     artifact.write_text("stable")
     digest = "sha256:" + hashlib.sha256(b"stable").hexdigest()
     config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _ReusableTracker("Build")
     _seed(
         config.path,
         "001.build",
         "passed",
         evidence=(Evidence("file-digest", str(artifact), digest),),
+        workflow_fingerprint=_fingerprint(task),
     )
-    task = _ReusableTracker("Build")
 
     _run(task, config, resume=True)
 
@@ -117,14 +132,15 @@ def test_passed_stale_evidence_reusable_runs(tmp_path: Path) -> None:
     artifact.write_text("original")
     digest = "sha256:" + hashlib.sha256(b"original").hexdigest()
     config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _ReusableTracker("Build")
     _seed(
         config.path,
         "001.build",
         "passed",
         evidence=(Evidence("file-digest", str(artifact), digest),),
+        workflow_fingerprint=_fingerprint(task),
     )
     artifact.write_text("mutated")  # digest no longer matches -> stale
-    task = _ReusableTracker("Build")
 
     _run(task, config, resume=True)
 
@@ -133,8 +149,14 @@ def test_passed_stale_evidence_reusable_runs(tmp_path: Path) -> None:
 
 def test_passed_ordinary_task_runs(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "passed", evidence=(Evidence("exact-value", "v1"),))
     task = _Tracker("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("exact-value", "v1"),),
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     _run(task, config, resume=True)
 
@@ -143,8 +165,13 @@ def test_passed_ordinary_task_runs(tmp_path: Path) -> None:
 
 def test_started_only_idempotent_retries(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "started")
     task = _Tracker("Build", idempotent=True)
+    _seed(
+        config.path,
+        "001.build",
+        "started",
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     _run(task, config, resume=True)
 
@@ -154,8 +181,13 @@ def test_started_only_idempotent_retries(tmp_path: Path) -> None:
 
 def test_started_only_non_idempotent_raises(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "started")
     task = _Tracker("Build", idempotent=False)
+    _seed(
+        config.path,
+        "001.build",
+        "started",
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     with pytest.raises(AmbiguousTaskStateError):
         _run(task, config, resume=True)
@@ -165,8 +197,13 @@ def test_started_only_non_idempotent_raises(tmp_path: Path) -> None:
 
 def test_failed_non_idempotent_no_automatic_retry(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "failed")
     task = _Tracker("Build", idempotent=False)
+    _seed(
+        config.path,
+        "001.build",
+        "failed",
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     with pytest.raises(AmbiguousTaskStateError):
         _run(task, config, resume=True)
@@ -176,8 +213,13 @@ def test_failed_non_idempotent_no_automatic_retry(tmp_path: Path) -> None:
 
 def test_failed_idempotent_retries(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "failed")
     task = _Tracker("Build", idempotent=True)
+    _seed(
+        config.path,
+        "001.build",
+        "failed",
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     _run(task, config, resume=True)
 
@@ -191,7 +233,6 @@ def test_acquire_started_only_raises_ambiguous_and_never_reruns(tmp_path: Path) 
     """An acquire has no `idempotent` signal; an interrupted (`started`-only) one must
     not be blindly retried -- its actual completion is unknown."""
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.acquire-vm", "started")
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
@@ -200,6 +241,12 @@ def test_acquire_started_only_raises_ambiguous_and_never_reruns(tmp_path: Path) 
     )
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Use vm"), requires=(resource,))
+    _seed(
+        config.path,
+        "001.acquire-vm",
+        "started",
+        workflow_fingerprint=workflow.compile().fingerprint,
+    )
 
     with pytest.raises(AmbiguousTaskStateError):
         workflow.run( journal=config, resume=True)
@@ -211,7 +258,6 @@ def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
     """Matches "passed non-reusable tasks run again": a resource is never
     journal-skipped just because it was successfully acquired in a prior run."""
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.acquire-vm", "passed")
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
@@ -220,6 +266,12 @@ def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
     )
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Use vm"), requires=(resource,))
+    _seed(
+        config.path,
+        "001.acquire-vm",
+        "passed",
+        workflow_fingerprint=workflow.compile().fingerprint,
+    )
 
     workflow.run( journal=config, resume=True)
 
@@ -273,13 +325,14 @@ def test_file_digest_evidence_without_digest_is_unverified(tmp_path: Path) -> No
     artifact = tmp_path / "artifact.txt"
     artifact.write_text("stable")
     config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _ReusableTracker("Build")
     _seed(
         config.path,
         "001.build",
         "passed",
         evidence=(Evidence("file-digest", str(artifact), digest=None),),
+        workflow_fingerprint=_fingerprint(task),
     )
-    task = _ReusableTracker("Build")
 
     _run(task, config, resume=True)
 
@@ -289,13 +342,14 @@ def test_file_digest_evidence_without_digest_is_unverified(tmp_path: Path) -> No
 def test_file_digest_evidence_missing_file_is_unverified(tmp_path: Path) -> None:
     missing = tmp_path / "gone.txt"
     config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _ReusableTracker("Build")
     _seed(
         config.path,
         "001.build",
         "passed",
         evidence=(Evidence("file-digest", str(missing), "sha256:" + "0" * 64),),
+        workflow_fingerprint=_fingerprint(task),
     )
-    task = _ReusableTracker("Build")
 
     _run(task, config, resume=True)
 
@@ -304,8 +358,14 @@ def test_file_digest_evidence_missing_file_is_unverified(tmp_path: Path) -> None
 
 def test_unknown_evidence_kind_fails_closed_and_runs(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "passed", evidence=(Evidence("mystery-kind", "x"),))
     task = _ReusableTracker("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("mystery-kind", "x"),),
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     _run(task, config, resume=True)
 
@@ -314,8 +374,14 @@ def test_unknown_evidence_kind_fails_closed_and_runs(tmp_path: Path) -> None:
 
 def test_injected_verifier_enables_skip(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
-    _seed(config.path, "001.build", "passed", evidence=(Evidence("custom", "ok"),))
     task = _ReusableTracker("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("custom", "ok"),),
+        workflow_fingerprint=_fingerprint(task),
+    )
 
     _run(task, config, resume=True, verifiers={"custom": lambda _e: True})
 

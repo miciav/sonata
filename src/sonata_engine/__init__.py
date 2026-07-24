@@ -17,6 +17,7 @@ from sonata_engine.errors import (
     InvalidTaskOutcomeError,
     ResumeConfigurationError,
     UnsupportedJournalSchemaError,
+    WorkflowTopologyMismatchError,
 )
 from sonata_engine.journal import JournalConfig, Verifier
 from sonata_engine.workflow import (
@@ -54,6 +55,7 @@ __all__ = [
     "WorkflowRun",
     "WorkflowSink",
     "WorkflowState",
+    "WorkflowTopologyMismatchError",
     "WorkflowResult",
     "__version__",
 ]
