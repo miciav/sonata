@@ -81,7 +81,7 @@ def task_lifecycle(
     with bind_workflow_context(child):
         try:
             yield child
-        except Exception as exc:
+        except BaseException as exc:
             _emit(
                 build_task_event(
                     kind="task.failed",
@@ -128,7 +128,7 @@ def workflow_step(
     with bind_workflow_context(child):
         try:
             yield child
-        except Exception as exc:
+        except BaseException as exc:
             _emit(
                 build_task_event(
                     kind="task.failed",

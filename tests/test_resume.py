@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from sonata_engine.core.outcome import Evidence, TaskOutcome
+from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
 from sonata_engine.errors import (
@@ -14,7 +15,7 @@ from sonata_engine.errors import (
     ResumeConfigurationError,
     UnsupportedJournalSchemaError,
 )
-from sonata_engine.journal import JournalConfig
+from sonata_engine.journal import Journal, JournalConfig
 
 
 class _Tracker(Task[None]):
@@ -181,6 +182,88 @@ def test_failed_idempotent_retries(tmp_path: Path) -> None:
     _run(task, config, resume=True)
 
     assert task.ran is True
+
+
+# --- Resource acquire on resume -----------------------------------------------
+
+
+def test_acquire_started_only_raises_ambiguous_and_never_reruns(tmp_path: Path) -> None:
+    """An acquire has no `idempotent` signal; an interrupted (`started`-only) one must
+    not be blindly retried -- its actual completion is unknown."""
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    _seed(config.path, "001.acquire-vm", "started")
+    calls: list[str] = []
+    resource = Resource(
+        title="Acquire vm",
+        acquire=lambda: calls.append("acquire"),
+        release=lambda: calls.append("release"),
+    )
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_Tracker("Use vm"), requires=(resource,))
+
+    with pytest.raises(AmbiguousTaskStateError):
+        workflow.run_compiled(workflow.compile(), journal=config, resume=True)
+
+    assert calls == []
+
+
+def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
+    """Matches "passed non-reusable tasks run again": a resource is never
+    journal-skipped just because it was successfully acquired in a prior run."""
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    _seed(config.path, "001.acquire-vm", "passed")
+    calls: list[str] = []
+    resource = Resource(
+        title="Acquire vm",
+        acquire=lambda: calls.append("acquire"),
+        release=lambda: calls.append("release"),
+    )
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_Tracker("Use vm"), requires=(resource,))
+
+    workflow.run_compiled(workflow.compile(), journal=config, resume=True)
+
+    assert "acquire" in calls
+
+
+# --- Journal I/O failure during release cleanup -------------------------------
+
+
+def test_release_journal_failure_does_not_mask_main_error_or_abort_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    calls: list[str] = []
+    resource = Resource(
+        title="Acquire vm",
+        acquire=lambda: calls.append("acquire"),
+        release=lambda: calls.append("release"),
+    )
+
+    class _FailTask(Task[None]):
+        title = "Consume"
+
+        def run(self) -> TaskOutcome[None]:
+            raise RuntimeError("consume failed")
+
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_FailTask(), requires=(resource,))
+    compiled = workflow.compile()
+    release_id = next(ct.task_id for ct in compiled.tasks if ct.kind == "release")
+
+    original_record_started = Journal.record_started
+
+    def _flaky_record_started(self: Journal, task_id: str, attempt: int) -> None:
+        if task_id == release_id:
+            raise OSError("disk full")
+        original_record_started(self, task_id, attempt)
+
+    monkeypatch.setattr(Journal, "record_started", _flaky_record_started)
+
+    with pytest.raises(RuntimeError, match="consume failed"):
+        workflow.run_compiled(compiled, journal=config)
+
+    assert "release" in calls  # cleanup still ran despite the journal write failure
 
 
 # --- Evidence verifier registry ----------------------------------------------

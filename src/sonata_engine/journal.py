@@ -21,6 +21,7 @@ from typing import Literal
 
 from sonata_engine.core.compiled import CompiledTask
 from sonata_engine.core.outcome import Evidence
+from sonata_engine.core.task import ReusableTask
 from sonata_engine.errors import AmbiguousTaskStateError, UnsupportedJournalSchemaError
 
 SCHEMA_VERSION = 2
@@ -150,6 +151,14 @@ class Journal:
 
     Intended model: one journal file per workflow. `_load()` defensively filters
     records by `workflow_id` in case a file is ever shared across workflows.
+
+    Resume assumes the workflow definition is unchanged between the run that wrote
+    the journal and the run that resumes it: `task_id` is `{ordinal:03d}.{slug}`
+    (see `Workflow.compile()`), derived only from position and title, with no
+    content-based identity. Inserting, removing, or reordering tasks between runs
+    can make a resumed run silently miss a skip it should get, or -- if an unrelated
+    new task happens to land at the same ordinal with a same-slugging title --
+    incorrectly reuse a prior task's evidence for a task that never actually ran.
     """
 
     def __init__(
@@ -206,10 +215,24 @@ class Journal:
         task = compiled_task.task
         return decide_resume(
             self._states.get(compiled_task.task_id),
-            idempotent=getattr(task, "idempotent", False),
-            reusable=getattr(task, "reusable", False),
+            idempotent=task.idempotent,
+            reusable=isinstance(task, ReusableTask),
             verifiers=self.verifiers,
         )
+
+    def guard_not_ambiguous(self, task_id: str) -> None:
+        """Raise if `task_id`'s latest record is `started` with no terminal outcome.
+
+        Used for resource acquire units, which have no `idempotent` signal of their
+        own: an interrupted acquire's actual completion is unknown, so it must not be
+        blindly retried (unlike a `passed` acquire, which always reruns -- ordinary,
+        non-reusable units are never journal-skipped).
+        """
+        state = self._states.get(task_id)
+        if state is not None and state.status == "started":
+            raise AmbiguousTaskStateError(
+                f"{task_id} is 'started' with no terminal record; refusing automatic resume"
+            )
 
     def record_started(self, task_id: str, attempt: int) -> None:
         self._write(task_id, attempt, "started", started_at=_utc_iso(), finished_at=None)
@@ -255,5 +278,10 @@ class Journal:
         with open(self.path, "a", encoding="utf-8") as handle:
             handle.write(line)
             handle.flush()
-            os.fsync(handle.fileno())
+            if status == "started":
+                # Only the pre-execution record needs disk-level durability: it's the
+                # one a crash mid-task must leave behind. Terminal records losing their
+                # fsync race just look like `started` on the next resume, which
+                # guard_not_ambiguous/decide_resume already handle safely.
+                os.fsync(handle.fileno())
         self._states[task_id] = TaskState(task_id, attempt, status, evidence)

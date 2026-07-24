@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,9 +15,6 @@ from sonata_engine.workflow.reporting import task_lifecycle, workflow_step
 
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 
-# Re-exported for backwards compatibility: this error now lives in `errors.py`.
-__all__ = ["InvalidTaskOutcomeError", "Workflow"]
-
 
 def _slugify(title: str) -> str:
     return _SLUG_INVALID_CHARS.sub("-", title.lower()).strip("-")
@@ -29,12 +26,18 @@ class Workflow:
     task-definition builder/compiler.
 
     tasks run in order; execution stops at the first failure.
-    cleanup_tasks always run, even after a failure in tasks.
+    cleanup_tasks always run, unconditionally, even after a failure in tasks --
+    `keep_infrastructure` does not affect this legacy loop; it only retains
+    `infrastructure`-flagged `Resource`s in the compiled `run_compiled()` path.
 
     `add()`/`compile()`/`run_compiled()` are a separate, coexisting concern:
     they record ordered `Task` definitions (with the `Resource`s each consumes)
     and turn them into an immutable `CompiledWorkflow` with compiler-assigned
     IDs. Task objects never carry their own ID.
+
+    This is a deliberate, transitional split, not two permanent parallel APIs:
+    `run()` stays only because callers/tests predating the compiler still use it.
+    New code should use `add()`/`compile()`/`run_compiled()`.
     """
 
     # ponytail: `tasks`/`cleanup_tasks` accept duck-typed executor steps, not only `Task`
@@ -69,13 +72,12 @@ class Workflow:
                 break
 
         cleanup_errors: list[str] = []
-        if not self.keep_infrastructure:
-            for task in self.cleanup_tasks:
-                try:
-                    with workflow_step(task_id=task.task_id, title=task.title):
-                        task.run()
-                except Exception as exc:
-                    cleanup_errors.append(str(exc))
+        for task in self.cleanup_tasks:
+            try:
+                with workflow_step(task_id=task.task_id, title=task.title):
+                    task.run()
+            except Exception as exc:
+                cleanup_errors.append(str(exc))
 
         if main_error is not None:
             if cleanup_errors:
@@ -149,23 +151,37 @@ class Workflow:
         if release_errors:
             raise RuntimeError("Cleanup failed:\n" + "\n".join(release_errors))
 
+    def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
+        return jrnl.next_attempt(task_id) if jrnl is not None else 0
+
     def _run_unit(
         self, compiled_task: CompiledTask[object], jrnl: Journal | None, *, resume: bool
     ) -> None:
         """Run one consumer/acquire unit, recording its journal outcome. Raises on failure.
 
-        Only `consumer` units consult prior journal state for a skip/retry decision;
-        acquire units always run (releases are handled by `_release`). The resume
-        decision may raise `AmbiguousTaskStateError` before anything executes.
+        Only `consumer` units consult prior journal state for a skip/retry decision.
+        Acquire units have no `idempotent` signal of their own, so a `passed` acquire
+        always reruns (matches "passed non-reusable tasks run again", same as any
+        ordinary task); but an interrupted (`started`-only) acquire is guarded --
+        its actual completion is unknown, so it must not be blindly retried.
+        Releases are handled separately by `_release`. The resume decision may raise
+        `AmbiguousTaskStateError` before anything executes.
+
+        A journal-write failure here is allowed to propagate (treated like any other
+        task failure) -- unlike `_release`, which must keep attempting every pending
+        release even if the journal itself is failing.
         """
         task_id = compiled_task.task_id
         task = compiled_task.task
-        if jrnl is not None and resume and compiled_task.kind == "consumer":
-            if jrnl.decide(compiled_task) == "skip":
-                jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-                return
+        if jrnl is not None and resume:
+            if compiled_task.kind == "consumer":
+                if jrnl.decide(compiled_task) == "skip":
+                    jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
+                    return
+            elif compiled_task.kind == "acquire":
+                jrnl.guard_not_ambiguous(task_id)
 
-        attempt = jrnl.next_attempt(task_id) if jrnl is not None else 0
+        attempt = self._next_attempt(jrnl, task_id)
         if jrnl is not None:
             # Flush the started record BEFORE executing, so a crash mid-task is durable.
             jrnl.record_started(task_id, attempt)
@@ -183,6 +199,18 @@ class Workflow:
         if jrnl is not None:
             jrnl.record_passed(task_id, attempt, outcome.evidence)
 
+    def _record_release_outcome(
+        self, release_errors: list[str], record: Callable[[], None]
+    ) -> None:
+        """Run a `jrnl.record_*` call, collecting a journal I/O failure instead of
+        letting it propagate. Cleanup must keep attempting every pending release even
+        if the journal itself is failing (e.g. disk full) -- a journal-write error here
+        must never mask the real release failure or abort the reverse-release loop."""
+        try:
+            record()
+        except OSError as exc:
+            release_errors.append(f"{exc.__class__.__name__} recording release outcome: {exc}")
+
     def _release(
         self,
         compiled_task: CompiledTask[object],
@@ -198,19 +226,25 @@ class Workflow:
         if self.keep_infrastructure and resource is not None and resource.infrastructure:
             return
         task_id = compiled_task.task_id
-        attempt = jrnl.next_attempt(task_id) if jrnl is not None else 0
+        attempt = self._next_attempt(jrnl, task_id)
         if jrnl is not None:
-            jrnl.record_started(task_id, attempt)
+            self._record_release_outcome(
+                release_errors, lambda: jrnl.record_started(task_id, attempt)
+            )
         try:
             with task_lifecycle(task_id=task_id, title=compiled_task.task.title):
                 compiled_task.task.run()
         except Exception as exc:
-            if jrnl is not None:
-                jrnl.record_failed(task_id, attempt)
             release_errors.append(str(exc))
+            if jrnl is not None:
+                self._record_release_outcome(
+                    release_errors, lambda: jrnl.record_failed(task_id, attempt)
+                )
         else:
             if jrnl is not None:
-                jrnl.record_passed(task_id, attempt)
+                self._record_release_outcome(
+                    release_errors, lambda: jrnl.record_passed(task_id, attempt)
+                )
 
     def add(self, task: Task[Any], requires: tuple[Resource, ...] = ()) -> Workflow:
         """Record a task definition and the resources it consumes. Order preserved."""

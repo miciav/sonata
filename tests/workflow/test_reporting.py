@@ -81,6 +81,17 @@ def test_workflow_step_emits_failed_on_exception() -> None:
     assert [e.kind for e in sink.events] == ["task.running", "task.failed"]
 
 
+def test_workflow_step_emits_failed_on_keyboard_interrupt() -> None:
+    """`BaseException` (not just `Exception`) must still emit `task.failed`, so an
+    interrupted run doesn't leave the event stream stuck on `task.running`/`task.started`."""
+    sink = _FakeSink()
+    with bind_workflow_sink(sink):
+        with pytest.raises(KeyboardInterrupt):
+            with workflow_step(task_id="vm.up", title="Start VM"):
+                raise KeyboardInterrupt
+    assert [e.kind for e in sink.events] == ["task.running", "task.failed"]
+
+
 def test_workflow_step_propagates_parent_task_id_from_context() -> None:
     sink = _FakeSink()
     ctx = WorkflowContext(flow_id="e2e.k3s", task_id="tests.run_checks")
@@ -105,6 +116,15 @@ def test_task_lifecycle_emits_failed_on_exception() -> None:
         with pytest.raises(RuntimeError, match="boom"):
             with task_lifecycle(task_id="001.build", title="Build"):
                 raise RuntimeError("boom")
+    assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
+
+
+def test_task_lifecycle_emits_failed_on_keyboard_interrupt() -> None:
+    sink = _FakeSink()
+    with bind_workflow_sink(sink):
+        with pytest.raises(KeyboardInterrupt):
+            with task_lifecycle(task_id="001.build", title="Build"):
+                raise KeyboardInterrupt
     assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
 
 

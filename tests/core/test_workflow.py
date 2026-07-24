@@ -8,7 +8,8 @@ import pytest
 
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import Task
-from sonata_engine.core.workflow import InvalidTaskOutcomeError, Workflow
+from sonata_engine.core.workflow import Workflow
+from sonata_engine.errors import InvalidTaskOutcomeError
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
 
@@ -98,7 +99,9 @@ def test_workflow_cleanup_runs_after_success_too() -> None:
     assert calls == ["a", "cleanup"]
 
 
-def test_keep_infrastructure_skips_static_cleanup_tasks() -> None:
+def test_keep_infrastructure_does_not_skip_static_cleanup_tasks() -> None:
+    """`keep_infrastructure` only retains `infrastructure`-flagged `Resource`s in the
+    compiled `run_compiled()` path; the legacy `cleanup_tasks` list is unconditional."""
     calls: list[str] = []
     workflow = Workflow(
         tasks=[_OkTask(task_id="a", title="A", calls=calls)],
@@ -108,7 +111,7 @@ def test_keep_infrastructure_skips_static_cleanup_tasks() -> None:
 
     workflow.run()
 
-    assert calls == ["a"]
+    assert calls == ["a", "cleanup"]
 
 
 def test_workflow_task_ids_includes_all_tasks() -> None:
