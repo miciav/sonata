@@ -430,3 +430,29 @@ def test_base_exception_in_finalizer_does_not_abort_remaining_cleanup() -> None:
         workflow.run()
 
     assert calls[-2:] == ["release.second", "release.first"]
+
+
+def test_finalizer_base_exception_remains_primary_after_task_failure() -> None:
+    calls: list[str] = []
+    first = _resource("first", calls)
+
+    def _interrupt_release() -> None:
+        calls.append("release.second")
+        raise KeyboardInterrupt
+
+    second = Resource(
+        title="Acquire second",
+        acquire=lambda: calls.append("acquire.second"),
+        release=_interrupt_release,
+    )
+    workflow = _workflow()
+    workflow.add(
+        _RecordTask("Main", calls, fail=True),
+        requires=(first, second),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        workflow.run()
+
+    assert calls[-2:] == ["release.second", "release.first"]
+    assert any("Main failed" in note for note in exc_info.value.__notes__)

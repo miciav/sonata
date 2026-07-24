@@ -117,6 +117,22 @@ class Workflow:
             for compiled_task in reversed(pending):
                 self._release(compiled_task, release_errors, jrnl)
 
+        critical_error = (
+            main_error
+            if main_error is not None and not isinstance(main_error, Exception)
+            else next(
+                (error for error in release_errors if not isinstance(error, Exception)),
+                None,
+            )
+        )
+        if critical_error is not None:
+            if main_error is not None and main_error is not critical_error:
+                critical_error.add_note(f"Task error: {main_error}")
+            for error in release_errors:
+                if error is not critical_error:
+                    critical_error.add_note(f"Cleanup error: {error}")
+            raise critical_error
+
         if main_error is not None:
             if release_errors:
                 combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
@@ -126,15 +142,6 @@ class Workflow:
             raise main_error
 
         if release_errors:
-            critical = next(
-                (error for error in release_errors if not isinstance(error, Exception)),
-                None,
-            )
-            if critical is not None:
-                for error in release_errors:
-                    if error is not critical:
-                        critical.add_note(f"Cleanup error: {error}")
-                raise critical
             raise RuntimeError(
                 "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
             )
