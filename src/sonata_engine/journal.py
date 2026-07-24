@@ -147,6 +147,9 @@ class Journal:
     `schema_version`, and folds the records into one `TaskState` per `task_id`.
     Writes are append-only and flushed+fsynced before the task executes, so a
     crash mid-task leaves a durable `started` record.
+
+    Intended model: one journal file per workflow. `_load()` defensively filters
+    records by `workflow_id` in case a file is ever shared across workflows.
     """
 
     def __init__(
@@ -178,6 +181,8 @@ class Journal:
                 raise UnsupportedJournalSchemaError(
                     f"{self.path}: schema_version {version!r}, expected {SCHEMA_VERSION}"
                 )
+            if record.get("workflow_id") != self.workflow_id:
+                continue
             task_id = record["task_id"]
             attempt = record["attempt"]
             existing = states.get(task_id)
@@ -191,9 +196,6 @@ class Journal:
                     evidence=_evidence_from_json(record.get("evidence", [])),
                 )
         return states
-
-    def state_for(self, task_id: str) -> TaskState | None:
-        return self._states.get(task_id)
 
     def next_attempt(self, task_id: str) -> int:
         state = self._states.get(task_id)
