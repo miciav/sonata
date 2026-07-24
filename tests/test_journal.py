@@ -8,7 +8,7 @@ import pytest
 
 from sonata_engine.core.outcome import Evidence, TaskOutcome
 from sonata_engine.core.resource_task import Resource
-from sonata_engine.core.task import Task
+from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
 from sonata_engine.journal import JournalConfig
 
@@ -19,6 +19,17 @@ class _Ok(Task[None]):
         self._evidence = evidence
 
     def run(self) -> TaskOutcome[None]:
+        return TaskOutcome(evidence=self._evidence)
+
+
+class _ReusableOk(ReusableTask):
+    def __init__(self, title: str, evidence: tuple[Evidence, ...] = ()) -> None:
+        self.title = title
+        self._evidence = evidence
+        self.ran = False
+
+    def run(self) -> TaskOutcome[None]:
+        self.ran = True
         return TaskOutcome(evidence=self._evidence)
 
 
@@ -143,6 +154,61 @@ def test_started_record_is_durable_before_task_body_runs(tmp_path: Path) -> None
     workflow.run_compiled(workflow.compile(), journal=config)
 
     assert [r["status"] for r in seen["records"]] == ["started"]
+
+
+def test_release_failure_records_failed_outcome(tmp_path: Path) -> None:
+    def _boom() -> None:
+        raise RuntimeError("release boom")
+
+    resource = Resource(title="Acquire db", acquire=lambda: None, release=_boom)
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_Ok("Use"), requires=(resource,))
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+
+    with pytest.raises(RuntimeError, match="Cleanup failed"):
+        workflow.run_compiled(workflow.compile(), journal=config)
+
+    records = _records(config.path)
+    release_records = [r for r in records if r["task_id"].endswith("release-db")]
+    assert [r["status"] for r in release_records] == ["started", "failed"]
+
+
+def test_load_skips_blank_lines(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(_Ok("Build"))
+    config = JournalConfig(path=path)
+    workflow.run_compiled(workflow.compile(), journal=config)
+
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write("\n")  # blank line between attempts, must not break parsing
+
+    # A fresh Journal (via a second run_compiled) re-reads the file including the
+    # blank line; a second, ordinary (non-reusable) task run must still succeed.
+    workflow.run_compiled(workflow.compile(), journal=config)
+    records = _records(path)
+    assert max(r["attempt"] for r in records) == 2
+
+
+def test_load_filters_records_by_workflow_id(tmp_path: Path) -> None:
+    """A `passed`+verified-evidence record from a DIFFERENT workflow sharing the same
+    journal file must never cause an incorrect skip -- that's the actual danger the
+    `workflow_id` filter in `_load()` protects against (an ordinary, non-reusable task
+    always reruns regardless, so the scenario needs a reusable task to be meaningful)."""
+    path = tmp_path / "journal.jsonl"
+    config = JournalConfig(path=path)
+    evidence = (Evidence("exact-value", "v1"),)
+
+    other = Workflow(tasks=[], workflow_id="other-workflow")
+    other.add(_ReusableOk("Build", evidence=evidence))
+    other.run_compiled(other.compile(), journal=config)  # records "001.build" passed
+
+    task = _ReusableOk("Build", evidence=evidence)
+    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow.add(task)
+    workflow.run_compiled(workflow.compile(), journal=config, resume=True)
+
+    assert task.ran is True  # not skipped based on the other workflow's evidence
 
 
 def test_no_journal_writes_no_file(tmp_path: Path) -> None:

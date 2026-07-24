@@ -269,6 +269,39 @@ def test_release_journal_failure_does_not_mask_main_error_or_abort_cleanup(
 # --- Evidence verifier registry ----------------------------------------------
 
 
+def test_file_digest_evidence_without_digest_is_unverified(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("stable")
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("file-digest", str(artifact), digest=None),),
+    )
+    task = _ReusableTracker("Build")
+
+    _run(task, config, resume=True)
+
+    assert task.ran is True  # no digest to check against -> never verified
+
+
+def test_file_digest_evidence_missing_file_is_unverified(tmp_path: Path) -> None:
+    missing = tmp_path / "gone.txt"
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("file-digest", str(missing), "sha256:" + "0" * 64),),
+    )
+    task = _ReusableTracker("Build")
+
+    _run(task, config, resume=True)
+
+    assert task.ran is True  # file no longer exists -> unverifiable, not verified
+
+
 def test_unknown_evidence_kind_fails_closed_and_runs(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     _seed(config.path, "001.build", "passed", evidence=(Evidence("mystery-kind", "x"),))

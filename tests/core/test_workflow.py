@@ -45,6 +45,14 @@ class _FailTask:
         raise RuntimeError(f"{self.task_id} failed")
 
 
+def test_invalid_task_outcome_error_is_not_re_exported_from_workflow_module() -> None:
+    """`InvalidTaskOutcomeError` lives in `sonata_engine.errors` only -- v2 has no
+    compatibility layer, so this module must not re-export it under its own name."""
+    import sonata_engine.core.workflow as workflow_module
+
+    assert "InvalidTaskOutcomeError" not in vars(workflow_module).get("__all__", ())
+
+
 def test_workflow_runs_tasks_in_order() -> None:
     calls: list[str] = []
     workflow = Workflow(
@@ -126,6 +134,20 @@ def test_workflow_task_ids_includes_all_tasks() -> None:
         ],
     )
     assert workflow.task_ids == ["a", "b", "cleanup"]
+
+
+def test_workflow_phase_titles_includes_all_tasks() -> None:
+    calls: list[str] = []
+    workflow = Workflow(
+        tasks=[
+            _OkTask(task_id="a", title="A", calls=calls),
+            _OkTask(task_id="b", title="B", calls=calls),
+        ],
+        cleanup_tasks=[
+            _OkTask(task_id="cleanup", title="Cleanup", calls=calls),
+        ],
+    )
+    assert workflow.phase_titles == ["A", "B", "Cleanup"]
 
 
 def test_workflow_cleanup_error_raised_after_main_error() -> None:
