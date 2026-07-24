@@ -24,10 +24,20 @@ class _Ok(Task[None]):
 
 
 class _ReusableOk(ReusableTask):
-    def __init__(self, title: str, evidence: tuple[Evidence, ...] = ()) -> None:
+    def __init__(
+        self,
+        title: str,
+        evidence: tuple[Evidence, ...] = (),
+        reuse_key: str | None = None,
+    ) -> None:
         self.title = title
         self._evidence = evidence
+        self._reuse_key = reuse_key or title
         self.ran = False
+
+    @property
+    def reuse_key(self) -> str:
+        return self._reuse_key
 
     def run(self) -> TaskOutcome[None]:
         self.ran = True
@@ -352,6 +362,34 @@ def test_load_rejects_malformed_interior_record(tmp_path: Path) -> None:
 
     with pytest.raises(CorruptJournalError):
         workflow.run(journal=JournalConfig(path=path))
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("kind", 1),
+        ("reference", None),
+        ("digest", 42),
+    ],
+)
+def test_load_rejects_evidence_with_invalid_field_types(
+    tmp_path: Path, field: str, invalid_value: object
+) -> None:
+    path = tmp_path / "journal.jsonl"
+    config = JournalConfig(path=path)
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_Ok("Build"))
+    workflow.run(journal=config)
+    malformed = dict(_records(path)[-1])
+    evidence = {"kind": "file-digest", "reference": "artifact", "digest": None}
+    evidence[field] = invalid_value
+    malformed["attempt"] = 2
+    malformed["evidence"] = [evidence]
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(malformed) + "\n")
+
+    with pytest.raises(CorruptJournalError):
+        workflow.run(journal=config, resume=True)
 
 
 def test_load_filters_records_by_workflow_id(tmp_path: Path) -> None:

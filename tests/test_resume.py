@@ -16,6 +16,7 @@ from sonata_engine.errors import (
     AmbiguousTaskStateError,
     ResumeConfigurationError,
     UnsupportedJournalSchemaError,
+    WorkflowTopologyMismatchError,
 )
 from sonata_engine.journal import Journal, JournalConfig
 from sonata_engine.workflow.context import bind_workflow_sink
@@ -37,10 +38,20 @@ class _Tracker(Task[None]):
 
 
 class _ReusableTracker(ReusableTask):
-    def __init__(self, title: str, evidence: tuple[Evidence, ...] = ()) -> None:
+    def __init__(
+        self,
+        title: str,
+        evidence: tuple[Evidence, ...] = (),
+        reuse_key: str | None = None,
+    ) -> None:
         self.title = title
         self._evidence = evidence
+        self._reuse_key = reuse_key or title
         self.ran = False
+
+    @property
+    def reuse_key(self) -> str:
+        return self._reuse_key
 
     def run(self) -> TaskOutcome[None]:
         self.ran = True
@@ -159,6 +170,24 @@ def test_injected_exact_value_verifier_enables_skip(tmp_path: Path) -> None:
     assert [(event.kind, event.task_id) for event in sink.events] == [
         ("task.skipped", "001.build")
     ]
+
+
+def test_changed_reusable_semantics_cannot_reuse_still_valid_evidence(
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("stable")
+    digest = "sha256:" + hashlib.sha256(b"stable").hexdigest()
+    evidence = (Evidence("file-digest", str(artifact), digest),)
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    original = _ReusableTracker("Build", evidence=evidence, reuse_key="source=old")
+    _run(original, config)
+    changed = _ReusableTracker("Build", evidence=evidence, reuse_key="source=new")
+
+    with pytest.raises(WorkflowTopologyMismatchError):
+        _run(changed, config, resume=True)
+
+    assert changed.ran is False
 
 
 def test_passed_valid_file_digest_reusable_skips(tmp_path: Path) -> None:

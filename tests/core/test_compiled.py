@@ -6,12 +6,26 @@ import pytest
 
 from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
 from sonata_engine.core.outcome import TaskOutcome
-from sonata_engine.core.task import Task
+from sonata_engine.core.task import ReusableTask, Task
 
 
 class _NoopTask(Task[None]):
     def __init__(self, title: str) -> None:
         self.title = title
+
+    def run(self) -> TaskOutcome[None]:
+        return TaskOutcome()
+
+
+class _ReusableNoop(ReusableTask):
+    title = "Build"
+
+    def __init__(self, reuse_key: str) -> None:
+        self._reuse_key = reuse_key
+
+    @property
+    def reuse_key(self) -> str:
+        return self._reuse_key
 
     def run(self) -> TaskOutcome[None]:
         return TaskOutcome()
@@ -44,3 +58,16 @@ def test_compiled_task_holds_the_only_id() -> None:
 
     assert not hasattr(compiled_task.task, "task_id")
     assert compiled_task.task_id == "001.noop"
+
+
+def test_reusable_task_configuration_changes_workflow_fingerprint() -> None:
+    first = CompiledWorkflow(
+        workflow_id="wf",
+        tasks=(CompiledTask(task_id="001.build", task=_ReusableNoop("source=old")),),
+    )
+    second = CompiledWorkflow(
+        workflow_id="wf",
+        tasks=(CompiledTask(task_id="001.build", task=_ReusableNoop("source=new")),),
+    )
+
+    assert first.fingerprint != second.fingerprint

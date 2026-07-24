@@ -47,6 +47,7 @@ def test_task_is_abstract_and_cannot_be_instantiated() -> None:
 def test_reusable_task_returns_none_outcome() -> None:
     class MyReusable(ReusableTask):
         title = "Reusable"
+        reuse_key = "reusable-v1"
 
         @override
         def run(self) -> TaskOutcome[None]:
@@ -56,6 +57,18 @@ def test_reusable_task_returns_none_outcome() -> None:
     assert isinstance(task, Task)
     assert task.reusable is True
     assert task.run() == TaskOutcome()
+
+
+def test_reusable_task_requires_a_semantic_reuse_key() -> None:
+    class MissingReuseKey(ReusableTask):
+        title = "Reusable"
+
+        @override
+        def run(self) -> TaskOutcome[None]:
+            return TaskOutcome()
+
+    with pytest.raises(TypeError):
+        MissingReuseKey()  # type: ignore[abstract]
 
 
 def test_evidence_digest_defaults_to_none() -> None:
@@ -76,3 +89,4 @@ def test_invalid_run_override_fails_static_type_check() -> None:
     )
     assert result.returncode != 0, result.stdout
     assert "reportIncompatibleMethodOverride" in result.stdout
+    assert "reportAbstractUsage" in result.stdout

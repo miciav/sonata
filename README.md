@@ -37,8 +37,9 @@ assert result.by_id("001.build-image").outcome == TaskOutcome(
 
 Every concrete task subclasses `Task[T]` and returns `TaskOutcome[T]`. A
 `ReusableTask` may be skipped only when it returned non-empty evidence and every
-evidence item has a successful verifier; reusable tasks cannot return a runtime
-value.
+evidence item has a successful verifier. It must also expose a deterministic
+`reuse_key` that changes whenever semantic inputs change; this key participates in
+the workflow fingerprint. Reusable tasks cannot return a runtime value.
 
 ## Resources
 

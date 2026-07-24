@@ -325,6 +325,31 @@ def test_acquired_resource_is_released_if_passed_journal_write_fails(
     assert calls == ["acquire.db", "release.db"]
 
 
+def test_failed_journal_write_does_not_mask_task_error_or_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    db = _resource("db", calls)
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls, fail=True), requires=(db,))
+    original = Journal.record_failed
+
+    def _fail_consumer_failed(
+        self: Journal, task_id: str, attempt: int
+    ) -> None:
+        if task_id == "002.use":
+            raise OSError("journal secondary")
+        original(self, task_id, attempt)
+
+    monkeypatch.setattr(Journal, "record_failed", _fail_consumer_failed)
+
+    with pytest.raises(RuntimeError, match="Use failed") as exc_info:
+        workflow.run(journal=JournalConfig(tmp_path / "journal.jsonl"))
+
+    assert calls == ["acquire.db", "Use", "release.db"]
+    assert any("journal secondary" in note for note in exc_info.value.__notes__)
+
+
 def test_retained_infrastructure_emits_and_journals_skipped(tmp_path: Path) -> None:
     calls: list[str] = []
     vm = _resource("vm", calls, infrastructure=True)
@@ -381,5 +406,27 @@ def test_all_finalizers_run_after_release_and_journal_failures(
 
     with pytest.raises(RuntimeError, match="Cleanup failed"):
         workflow.run(journal=JournalConfig(tmp_path / "journal.jsonl"))
+
+    assert calls[-2:] == ["release.second", "release.first"]
+
+
+def test_base_exception_in_finalizer_does_not_abort_remaining_cleanup() -> None:
+    calls: list[str] = []
+    first = _resource("first", calls)
+
+    def _interrupt_release() -> None:
+        calls.append("release.second")
+        raise KeyboardInterrupt
+
+    second = Resource(
+        title="Acquire second",
+        acquire=lambda: calls.append("acquire.second"),
+        release=_interrupt_release,
+    )
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls), requires=(first, second))
+
+    with pytest.raises(KeyboardInterrupt):
+        workflow.run()
 
     assert calls[-2:] == ["release.second", "release.first"]

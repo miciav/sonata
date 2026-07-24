@@ -135,11 +135,22 @@ def _evidence_to_json(evidence: tuple[Evidence, ...]) -> list[dict[str, str | No
     return [{"kind": e.kind, "reference": e.reference, "digest": e.digest} for e in evidence]
 
 
-def _evidence_from_json(raw: list[dict[str, str | None]]) -> tuple[Evidence, ...]:
-    return tuple(
-        Evidence(kind=str(e["kind"]), reference=str(e["reference"]), digest=e.get("digest"))
-        for e in raw
-    )
+def _evidence_from_json(raw: object) -> tuple[Evidence, ...]:
+    if not isinstance(raw, list):
+        raise TypeError("evidence must be a list")
+    parsed: list[Evidence] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise TypeError("evidence entries must be objects")
+        kind = entry.get("kind")
+        reference = entry.get("reference")
+        digest = entry.get("digest")
+        if not isinstance(kind, str) or not isinstance(reference, str):
+            raise TypeError("evidence kind and reference must be strings")
+        if digest is not None and not isinstance(digest, str):
+            raise TypeError("evidence digest must be a string or null")
+        parsed.append(Evidence(kind=kind, reference=reference, digest=digest))
+    return tuple(parsed)
 
 
 class Journal:
@@ -154,9 +165,10 @@ class Journal:
     records by `workflow_id` in case a file is ever shared across workflows.
 
     The constructor receives the complete compiled workflow, validates its
-    deterministic fingerprint against every existing record, and creates attempt-0
-    `pending` records for every task missing from the journal. Resume therefore
-    refuses changed topologies instead of reusing evidence under a stale task ID.
+    deterministic fingerprint against every existing record, including each reusable
+    task's semantic key, and creates attempt-0 `pending` records for every task
+    missing from the journal. Resume therefore refuses changed definitions instead
+    of reusing evidence under a stale task ID.
     """
 
     def __init__(
@@ -231,8 +243,6 @@ class Journal:
                 attempt = int(record["attempt"])
                 status = str(record["status"])
                 raw_evidence = record.get("evidence", [])
-                if not isinstance(raw_evidence, list):
-                    raise TypeError("evidence must be a list")
                 evidence = _evidence_from_json(raw_evidence)
             except (KeyError, TypeError, ValueError) as exc:
                 raise CorruptJournalError(

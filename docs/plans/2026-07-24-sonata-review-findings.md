@@ -98,7 +98,9 @@ Expected: failures because `Journal` currently learns tasks only from lifecycle 
 
 **Step 3: Implement topology initialization**
 
-- Compute `CompiledWorkflow.fingerprint` from workflow ID and the ordered tuple of compiled task ID, kind, and task class fully-qualified name.
+- Compute `CompiledWorkflow.fingerprint` from workflow ID and the ordered tuple of
+  compiled task ID, kind, task class fully-qualified name, and the mandatory
+  `reuse_key` of each reusable task.
 - Construct `Journal` with the entire `CompiledWorkflow`.
 - Include `workflow_fingerprint` in every record.
 - On a new workflow journal, append attempt `0`, status `pending`, for every compiled task.

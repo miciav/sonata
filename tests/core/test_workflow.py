@@ -141,6 +141,13 @@ class _FakeSink:
         yield
 
 
+class _FailOnTaskFailedSink(_FakeSink):
+    def emit(self, event: WorkflowEvent) -> None:
+        super().emit(event)
+        if event.kind == "task.failed":
+            raise OSError("sink secondary")
+
+
 class _BoomTask(Task[None]):
     title = "Boom"
 
@@ -157,6 +164,7 @@ class _BadOutcomeTask(Task[None]):
 
 class _BadReusableValue(ReusableTask):
     title = "Bad reusable value"
+    reuse_key = "bad-reusable-value"
 
     def run(self) -> TaskOutcome[None]:
         return TaskOutcome(value=42)  # type: ignore[arg-type]
@@ -184,6 +192,17 @@ def test_run_emits_failed_on_exception_and_propagates() -> None:
 
     assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
     assert all(e.task_id == "001.boom" for e in sink.events)
+
+
+def test_failed_event_error_does_not_mask_task_root_cause() -> None:
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_BoomTask())
+
+    sink = _FailOnTaskFailedSink()
+    with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom") as exc_info:
+        workflow.run()
+
+    assert any("sink secondary" in note for note in exc_info.value.__notes__)
 
 
 def test_run_rejects_non_task_outcome_result() -> None:

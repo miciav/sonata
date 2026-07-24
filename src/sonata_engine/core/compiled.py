@@ -7,7 +7,7 @@ from typing import Any, Generic, Literal, TypeVar
 
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
-from sonata_engine.core.task import Task
+from sonata_engine.core.task import ReusableTask, Task
 
 T = TypeVar("T")
 
@@ -43,12 +43,13 @@ class CompiledWorkflow:
 
     @property
     def fingerprint(self) -> str:
-        """Deterministic identity of the ordered compiled topology."""
+        """Deterministic identity of topology and reusable-task semantics."""
         topology = [
             (
                 task.task_id,
                 task.kind,
                 f"{type(task.task).__module__}.{type(task.task).__qualname__}",
+                task.task.reuse_key if isinstance(task.task, ReusableTask) else None,
             )
             for task in self.tasks
         ]

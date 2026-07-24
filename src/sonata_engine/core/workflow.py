@@ -85,7 +85,7 @@ class Workflow:
         release_for = {ct.resource: ct for ct in compiled.tasks if ct.kind == "release"}
         # Release units for acquired-but-not-yet-released resources, in acquisition order.
         pending: list[CompiledTask[object]] = []
-        release_errors: list[str] = []
+        release_errors: list[BaseException] = []
         main_error: BaseException | None = None
         executions: list[TaskExecution] = []
 
@@ -119,12 +119,25 @@ class Workflow:
 
         if main_error is not None:
             if release_errors:
-                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(release_errors)
+                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
+                    str(error) for error in release_errors
+                )
                 raise RuntimeError(combined) from main_error
             raise main_error
 
         if release_errors:
-            raise RuntimeError("Cleanup failed:\n" + "\n".join(release_errors))
+            critical = next(
+                (error for error in release_errors if not isinstance(error, Exception)),
+                None,
+            )
+            if critical is not None:
+                for error in release_errors:
+                    if error is not critical:
+                        critical.add_note(f"Cleanup error: {error}")
+                raise critical
+            raise RuntimeError(
+                "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
+            )
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
     def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
@@ -174,16 +187,19 @@ class Workflow:
                     raise InvalidTaskOutcomeError(
                         f"{task_id} is reusable and returned a runtime value"
                     )
-        except BaseException:
+        except BaseException as exc:
             if jrnl is not None:
-                jrnl.record_failed(task_id, attempt)
+                try:
+                    jrnl.record_failed(task_id, attempt)
+                except BaseException as journal_error:
+                    exc.add_note(f"Failed to record task failure: {journal_error}")
             raise
         if jrnl is not None:
             jrnl.record_passed(task_id, attempt, outcome.evidence)
         return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
 
     def _record_release_outcome(
-        self, release_errors: list[str], record: Callable[[], None]
+        self, release_errors: list[BaseException], record: Callable[[], None]
     ) -> None:
         """Run a `jrnl.record_*` call, collecting a journal I/O failure instead of
         letting it propagate. Cleanup must keep attempting every pending release even
@@ -192,12 +208,13 @@ class Workflow:
         try:
             record()
         except OSError as exc:
-            release_errors.append(f"{exc.__class__.__name__} recording release outcome: {exc}")
+            exc.add_note("while recording release outcome")
+            release_errors.append(exc)
 
     def _release(
         self,
         compiled_task: CompiledTask[object],
-        release_errors: list[str],
+        release_errors: list[BaseException],
         jrnl: Journal | None = None,
     ) -> TaskExecution | None:
         """Run one release unit, honoring infrastructure retention, collecting errors.
@@ -220,8 +237,8 @@ class Workflow:
                     task_id=compiled_task.task_id,
                     title=compiled_task.task.title,
                 )
-            except Exception as exc:
-                release_errors.append(str(exc))
+            except BaseException as exc:
+                release_errors.append(exc)
             return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)
@@ -236,8 +253,8 @@ class Workflow:
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
                     )
-        except Exception as exc:
-            release_errors.append(str(exc))
+        except BaseException as exc:
+            release_errors.append(exc)
             if jrnl is not None:
                 self._record_release_outcome(
                     release_errors, lambda: jrnl.record_failed(task_id, attempt)

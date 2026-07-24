@@ -82,6 +82,11 @@ class Task(Generic[T], ABC):
 class ReusableTask(Task[None], ABC):
     reusable: bool = True
 
+    @property
+    @abstractmethod
+    def reuse_key(self) -> str:
+        raise NotImplementedError
+
     @abstractmethod
     def run(self) -> TaskOutcome[None]:
         raise NotImplementedError
@@ -91,6 +96,8 @@ class ReusableTask(Task[None], ABC):
   journal.
 - Only `ReusableTask` can be skipped from verified journal evidence.
 - A reusable task has no mutable result channel and returns `TaskOutcome[None]`.
+- Every reusable task supplies a deterministic `reuse_key`; it changes whenever
+  semantic configuration affecting the reusable output changes.
 - `idempotent` permits safe retry; it does not imply journal reuse.
 - Reconciliation tasks are normally idempotent and non-reusable.
 - The engine rejects a non-`TaskOutcome` runtime result even if static checks were
@@ -154,8 +161,9 @@ workflow.run(
   records. Recovery may truncate only a malformed final record without a newline;
   malformed complete or interior records raise `CorruptJournalError`.
 - Every record carries a deterministic fingerprint of the workflow ID and ordered
-  `(task_id, kind, task class)` topology. A missing or different fingerprint raises
-  `WorkflowTopologyMismatchError`; there is no compatibility fallback.
+  `(task_id, kind, task class, reusable reuse_key)` definition. A missing or different
+  fingerprint raises `WorkflowTopologyMismatchError`; there is no compatibility
+  fallback.
 - The workflow automatically records `started`, `passed`, `failed`, `skipped`, and
   finalizer outcomes. Tasks and scenarios never call the journal.
 - A passed reusable task is skipped only when it has non-empty evidence and every

@@ -25,9 +25,19 @@ class Task(Generic[T], ABC):
 
 
 class ReusableTask(Task[None], ABC):
-    """A task with no mutable result channel, eligible for skip-on-verified-evidence."""
+    """A task eligible for skip-on-verified-evidence.
+
+    `reuse_key` identifies the task's semantic configuration independently from its
+    compiler-owned task ID. It must change whenever inputs that affect reusable output
+    change.
+    """
 
     reusable: bool = True
+
+    @property
+    @abstractmethod
+    def reuse_key(self) -> str:
+        raise NotImplementedError
 
     @override
     @abstractmethod

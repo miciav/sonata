@@ -76,16 +76,19 @@ def _task_lifecycle(
         try:
             yield child
         except BaseException as exc:
-            _emit(
-                build_task_event(
-                    kind="task.failed",
-                    task_id=task_id,
-                    parent_task_id=child.parent_task_id,
-                    title=title,
-                    detail=str(exc),
-                    context=child,
+            try:
+                _emit(
+                    build_task_event(
+                        kind="task.failed",
+                        task_id=task_id,
+                        parent_task_id=child.parent_task_id,
+                        title=title,
+                        detail=str(exc),
+                        context=child,
+                    )
                 )
-            )
+            except BaseException as reporting_error:
+                exc.add_note(f"Failed to emit task.failed: {reporting_error}")
             raise
         else:
             _emit(
