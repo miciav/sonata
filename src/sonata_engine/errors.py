@@ -25,3 +25,7 @@ class UnsupportedJournalSchemaError(Exception):
 
 class WorkflowTopologyMismatchError(Exception):
     """Raised when a journal belongs to a different compiled workflow topology."""
+
+
+class CorruptJournalError(Exception):
+    """Raised when a journal contains a malformed complete record."""

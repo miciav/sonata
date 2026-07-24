@@ -14,6 +14,7 @@ from sonata_engine.core import (
 )
 from sonata_engine.errors import (
     AmbiguousTaskStateError,
+    CorruptJournalError,
     InvalidTaskOutcomeError,
     ResumeConfigurationError,
     UnsupportedJournalSchemaError,
@@ -36,6 +37,7 @@ __all__ = [
     "AmbiguousTaskStateError",
     "CompiledTask",
     "CompiledWorkflow",
+    "CorruptJournalError",
     "Evidence",
     "InvalidTaskOutcomeError",
     "JournalConfig",

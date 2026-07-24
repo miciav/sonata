@@ -24,6 +24,7 @@ from sonata_engine.core.outcome import Evidence
 from sonata_engine.core.task import ReusableTask
 from sonata_engine.errors import (
     AmbiguousTaskStateError,
+    CorruptJournalError,
     UnsupportedJournalSchemaError,
     WorkflowTopologyMismatchError,
 )
@@ -35,12 +36,6 @@ ResumeAction = Literal["run", "skip"]
 
 
 # --- Evidence verification registry ------------------------------------------
-
-
-def _verify_exact_value(evidence: Evidence) -> bool:
-    """`exact-value` evidence is self-verifying: it asserts a fact about itself
-    (e.g. a version string true at record time that does not rot)."""
-    return True
 
 
 def _verify_file_digest(evidence: Evidence) -> bool:
@@ -56,7 +51,6 @@ def _verify_file_digest(evidence: Evidence) -> bool:
 
 
 DEFAULT_VERIFIERS: dict[str, Verifier] = {
-    "exact-value": _verify_exact_value,
     "file-digest": _verify_file_digest,
 }
 
@@ -71,6 +65,8 @@ def _resolve_verifiers(verifiers: Mapping[str, Verifier] | None) -> dict[str, Ve
 
 def _all_verified(evidence: tuple[Evidence, ...], verifiers: Mapping[str, Verifier]) -> bool:
     """Every evidence entry must verify. Unknown `kind` (no verifier) fails closed."""
+    if not evidence:
+        return False
     for entry in evidence:
         verifier = verifiers.get(entry.kind)
         if verifier is None or not verifier(entry):
@@ -186,10 +182,36 @@ class Journal:
         states: dict[str, TaskState] = {}
         if not self.path.exists():
             return states
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        lines = self.path.read_bytes().splitlines(keepends=True)
+        offset = 0
+        for index, raw_line in enumerate(lines):
+            line_start = offset
+            offset += len(raw_line)
+            is_torn_tail = index == len(lines) - 1 and not raw_line.endswith((b"\n", b"\r"))
+            try:
+                line = raw_line.decode("utf-8")
+            except UnicodeError as exc:
+                if is_torn_tail:
+                    self._truncate_torn_tail(line_start)
+                    break
+                raise CorruptJournalError(
+                    f"{self.path}:{index + 1}: record is not valid UTF-8"
+                ) from exc
             if not line.strip():
                 continue
-            record = json.loads(line)
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if is_torn_tail:
+                    self._truncate_torn_tail(line_start)
+                    break
+                raise CorruptJournalError(
+                    f"{self.path}:{index + 1}: malformed JSON record"
+                ) from exc
+            if not isinstance(record, dict):
+                raise CorruptJournalError(
+                    f"{self.path}:{index + 1}: journal record must be an object"
+                )
             version = record.get("schema_version")
             if version != SCHEMA_VERSION:
                 raise UnsupportedJournalSchemaError(
@@ -203,8 +225,22 @@ class Journal:
                     f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
                     f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
                 )
-            task_id = record["task_id"]
-            attempt = record["attempt"]
+            try:
+                task_id = str(record["task_id"])
+                attempt = int(record["attempt"])
+                status = str(record["status"])
+                raw_evidence = record.get("evidence", [])
+                if not isinstance(raw_evidence, list):
+                    raise TypeError("evidence must be a list")
+                evidence = _evidence_from_json(raw_evidence)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CorruptJournalError(
+                    f"{self.path}:{index + 1}: malformed journal record"
+                ) from exc
+            if status not in {"pending", "started", "passed", "failed", "skipped"}:
+                raise CorruptJournalError(
+                    f"{self.path}:{index + 1}: invalid task status {status!r}"
+                )
             existing = states.get(task_id)
             # Records are appended in order: a later record for the same (or higher)
             # attempt supersedes an earlier one -- terminal replaces started.
@@ -212,10 +248,17 @@ class Journal:
                 states[task_id] = TaskState(
                     task_id=task_id,
                     attempt=attempt,
-                    status=record["status"],
-                    evidence=_evidence_from_json(record.get("evidence", [])),
+                    status=status,
+                    evidence=evidence,
                 )
         return states
+
+    def _truncate_torn_tail(self, offset: int) -> None:
+        """Remove only a non-newline-terminated final record after a crash."""
+        with open(self.path, "r+b") as handle:
+            handle.truncate(offset)
+            handle.flush()
+            os.fsync(handle.fileno())
 
     def next_attempt(self, task_id: str) -> int:
         state = self._states.get(task_id)
@@ -230,20 +273,6 @@ class Journal:
             reusable=isinstance(task, ReusableTask),
             verifiers=self.verifiers,
         )
-
-    def guard_not_ambiguous(self, task_id: str) -> None:
-        """Raise if `task_id`'s latest record is `started` with no terminal outcome.
-
-        Used for resource acquire units, which have no `idempotent` signal of their
-        own: an interrupted acquire's actual completion is unknown, so it must not be
-        blindly retried (unlike a `passed` acquire, which always reruns -- ordinary,
-        non-reusable units are never journal-skipped).
-        """
-        state = self._states.get(task_id)
-        if state is not None and state.status == "started":
-            raise AmbiguousTaskStateError(
-                f"{task_id} is 'started' with no terminal record; refusing automatic resume"
-            )
 
     def record_started(self, task_id: str, attempt: int) -> None:
         self._write(task_id, attempt, "started", started_at=_utc_iso(), finished_at=None)

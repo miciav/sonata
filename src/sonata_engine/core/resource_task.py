@@ -21,6 +21,7 @@ class Resource:
     acquire: Callable[[], None] = field(repr=False)
     release: Callable[[], None] = field(repr=False)
     infrastructure: bool = False
+    acquire_idempotent: bool = False
 
     @property
     def release_title(self) -> str:
@@ -38,6 +39,7 @@ class ResourceOp(Task[None]):
 
     title: str
     fn: Callable[[], None] = field(repr=False)
+    idempotent: bool = False
 
     @override
     def run(self) -> TaskOutcome[None]:

@@ -91,7 +91,7 @@ def _run(task: Task[None], config: JournalConfig, **kwargs: object) -> None:
 # --- Resume matrix -----------------------------------------------------------
 
 
-def test_passed_valid_evidence_reusable_skips(tmp_path: Path) -> None:
+def test_exact_value_without_injected_verifier_reruns(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     task = _ReusableTracker("Build", evidence=(Evidence("exact-value", "v1.2.3"),))
     _seed(
@@ -103,6 +103,38 @@ def test_passed_valid_evidence_reusable_skips(tmp_path: Path) -> None:
     )
 
     _run(task, config, resume=True)
+
+    assert task.ran is True
+    assert _records(config.path)[-1]["status"] == "passed"
+
+
+def test_empty_evidence_reusable_reruns(tmp_path: Path) -> None:
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _ReusableTracker("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        workflow_fingerprint=_fingerprint(task),
+    )
+
+    _run(task, config, resume=True)
+
+    assert task.ran is True
+
+
+def test_injected_exact_value_verifier_enables_skip(tmp_path: Path) -> None:
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _ReusableTracker("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("exact-value", "v1.2.3"),),
+        workflow_fingerprint=_fingerprint(task),
+    )
+
+    _run(task, config, resume=True, verifiers={"exact-value": lambda _e: True})
 
     assert task.ran is False
     assert _records(config.path)[-1]["status"] == "skipped"
@@ -229,22 +261,24 @@ def test_failed_idempotent_retries(tmp_path: Path) -> None:
 # --- Resource acquire on resume -----------------------------------------------
 
 
-def test_acquire_started_only_raises_ambiguous_and_never_reruns(tmp_path: Path) -> None:
-    """An acquire has no `idempotent` signal; an interrupted (`started`-only) one must
-    not be blindly retried -- its actual completion is unknown."""
+@pytest.mark.parametrize("prior_status", ["started", "failed"])
+def test_non_idempotent_acquire_never_retries_ambiguous_state(
+    tmp_path: Path, prior_status: str
+) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
         acquire=lambda: calls.append("acquire"),
         release=lambda: calls.append("release"),
+        acquire_idempotent=False,
     )
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Use vm"), requires=(resource,))
     _seed(
         config.path,
         "001.acquire-vm",
-        "started",
+        prior_status,
         workflow_fingerprint=workflow.compile().fingerprint,
     )
 
@@ -252,6 +286,32 @@ def test_acquire_started_only_raises_ambiguous_and_never_reruns(tmp_path: Path) 
         workflow.run( journal=config, resume=True)
 
     assert calls == []
+
+
+@pytest.mark.parametrize("prior_status", ["started", "failed"])
+def test_idempotent_acquire_retries_ambiguous_state(
+    tmp_path: Path, prior_status: str
+) -> None:
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    calls: list[str] = []
+    resource = Resource(
+        title="Acquire vm",
+        acquire=lambda: calls.append("acquire"),
+        release=lambda: calls.append("release"),
+        acquire_idempotent=True,
+    )
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_Tracker("Use vm"), requires=(resource,))
+    _seed(
+        config.path,
+        "001.acquire-vm",
+        prior_status,
+        workflow_fingerprint=workflow.compile().fingerprint,
+    )
+
+    workflow.run(journal=config, resume=True)
+
+    assert calls == ["acquire", "release"]
 
 
 def test_acquire_passed_always_reruns(tmp_path: Path) -> None:

@@ -140,12 +140,9 @@ class Workflow:
         task_id = compiled_task.task_id
         task = compiled_task.task
         if jrnl is not None and resume:
-            if compiled_task.kind == "consumer":
-                if jrnl.decide(compiled_task) == "skip":
-                    jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-                    return TaskExecution(task_id=task_id, status="skipped", outcome=None)
-            elif compiled_task.kind == "acquire":
-                jrnl.guard_not_ambiguous(task_id)
+            if jrnl.decide(compiled_task) == "skip":
+                jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
+                return TaskExecution(task_id=task_id, status="skipped", outcome=None)
 
         attempt = self._next_attempt(jrnl, task_id)
         if jrnl is not None:
@@ -288,7 +285,11 @@ class Workflow:
         merged: list[CompiledTask[Any]] = []
         for index, (task, requires) in enumerate(self._definitions):
             for resource in acquires_before.get(index, ()):
-                op = ResourceOp(title=resource.title, fn=resource.acquire)
+                op = ResourceOp(
+                    title=resource.title,
+                    fn=resource.acquire,
+                    idempotent=resource.acquire_idempotent,
+                )
                 merged.append(CompiledTask(task_id="", task=op, kind="acquire", resource=resource))
             merged.append(
                 CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")

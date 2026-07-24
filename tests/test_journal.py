@@ -10,7 +10,7 @@ from sonata_engine.core.outcome import Evidence, TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
-from sonata_engine.errors import WorkflowTopologyMismatchError
+from sonata_engine.errors import CorruptJournalError, WorkflowTopologyMismatchError
 from sonata_engine.journal import JournalConfig
 
 
@@ -317,6 +317,41 @@ def test_load_skips_blank_lines(tmp_path: Path) -> None:
     workflow.run( journal=config)
     records = _records(path)
     assert max(r["attempt"] for r in records) == 2
+
+
+def test_load_ignores_only_an_incomplete_final_json_line(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    config = JournalConfig(path=path)
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_Ok("Build"))
+    workflow.run(journal=config)
+
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write('{"schema_version":2,"workflow_id":"wf"')
+
+    workflow.run(journal=config)
+
+    assert max(record["attempt"] for record in _records(path)) == 2
+
+
+def test_load_rejects_malformed_newline_terminated_record(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    path.write_text("{not-json}\n")
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_Ok("Build"))
+
+    with pytest.raises(CorruptJournalError):
+        workflow.run(journal=JournalConfig(path=path))
+
+
+def test_load_rejects_malformed_interior_record(tmp_path: Path) -> None:
+    path = tmp_path / "journal.jsonl"
+    path.write_text('{not-json}\n{"partial":')
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_Ok("Build"))
+
+    with pytest.raises(CorruptJournalError):
+        workflow.run(journal=JournalConfig(path=path))
 
 
 def test_load_filters_records_by_workflow_id(tmp_path: Path) -> None:
