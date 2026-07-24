@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import json
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Generator
+
 import pytest
 
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import Task
 from sonata_engine.core.workflow import Workflow
+from sonata_engine.journal import Journal, JournalConfig
+from sonata_engine.workflow.context import bind_workflow_sink
+from sonata_engine.workflow.events import WorkflowEvent
 
 
 class _RecordTask(Task[None]):
@@ -34,6 +42,32 @@ def _resource(name: str, calls: list[str], *, infrastructure: bool = False) -> R
 
 def _workflow(**kwargs: object) -> Workflow:
     return Workflow(workflow_id="wf", **kwargs)  # type: ignore[arg-type]
+
+
+class _FailAcquirePassedSink:
+    def __init__(self) -> None:
+        self.events: list[WorkflowEvent] = []
+
+    def emit(self, event: WorkflowEvent) -> None:
+        self.events.append(event)
+        if event.kind == "task.passed" and event.task_id == "001.acquire-db":
+            raise OSError("event sink failed")
+
+    @contextmanager
+    def status(self, _label: str) -> Generator[None, None, None]:
+        yield
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.events: list[WorkflowEvent] = []
+
+    def emit(self, event: WorkflowEvent) -> None:
+        self.events.append(event)
+
+    @contextmanager
+    def status(self, _label: str) -> Generator[None, None, None]:
+        yield
 
 
 # --- Step 1: topology --------------------------------------------------------
@@ -248,3 +282,104 @@ def test_keep_infrastructure_still_releases_safety_after_failure() -> None:
 
     assert "release.port-forward" in calls
     assert "release.vm" not in calls
+
+
+def test_acquired_resource_is_released_if_terminal_event_emission_fails() -> None:
+    calls: list[str] = []
+    db = _resource("db", calls)
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls), requires=(db,))
+
+    with bind_workflow_sink(_FailAcquirePassedSink()), pytest.raises(
+        OSError, match="event sink failed"
+    ):
+        workflow.run()
+
+    assert calls == ["acquire.db", "release.db"]
+
+
+def test_acquired_resource_is_released_if_passed_journal_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    db = _resource("db", calls)
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls), requires=(db,))
+    original = Journal.record_passed
+
+    def _fail_acquire_passed(
+        self: Journal,
+        task_id: str,
+        attempt: int,
+        evidence: tuple = (),
+    ) -> None:
+        if task_id == "001.acquire-db":
+            raise OSError("journal failed")
+        original(self, task_id, attempt, evidence)
+
+    monkeypatch.setattr(Journal, "record_passed", _fail_acquire_passed)
+
+    with pytest.raises(OSError, match="journal failed"):
+        workflow.run(journal=JournalConfig(tmp_path / "journal.jsonl"))
+
+    assert calls == ["acquire.db", "release.db"]
+
+
+def test_retained_infrastructure_emits_and_journals_skipped(tmp_path: Path) -> None:
+    calls: list[str] = []
+    vm = _resource("vm", calls, infrastructure=True)
+    workflow = _workflow(keep_infrastructure=True)
+    workflow.add(_RecordTask("Use", calls), requires=(vm,))
+    config = JournalConfig(tmp_path / "journal.jsonl")
+    sink = _RecordingSink()
+
+    with bind_workflow_sink(sink):
+        workflow.run(journal=config)
+
+    skipped_events = [event for event in sink.events if event.kind == "task.skipped"]
+    assert [event.task_id for event in skipped_events] == ["003.release-vm"]
+    records = [
+        json.loads(line)
+        for line in config.path.read_text().splitlines()
+        if line.strip()
+    ]
+    release_statuses = [
+        record["status"]
+        for record in records
+        if record["task_id"] == "003.release-vm"
+    ]
+    assert release_statuses == ["pending", "skipped"]
+
+
+def test_all_finalizers_run_after_release_and_journal_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    def _failed_release() -> None:
+        calls.append("release.second")
+        raise RuntimeError("release failed")
+
+    first = _resource("first", calls)
+    second = Resource(
+        title="Acquire second",
+        acquire=lambda: calls.append("acquire.second"),
+        release=_failed_release,
+    )
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls), requires=(first, second))
+    original = Journal.record_started
+
+    def _fail_second_release_journal(
+        self: Journal, task_id: str, attempt: int
+    ) -> None:
+        if task_id.endswith("release-second"):
+            raise OSError("journal failed")
+        original(self, task_id, attempt)
+
+    monkeypatch.setattr(Journal, "record_started", _fail_second_release_journal)
+
+    with pytest.raises(RuntimeError, match="Cleanup failed"):
+        workflow.run(journal=JournalConfig(tmp_path / "journal.jsonl"))
+
+    assert calls[-2:] == ["release.second", "release.first"]

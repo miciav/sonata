@@ -105,6 +105,22 @@ def task_lifecycle(
             )
 
 
+def task_skipped(
+    *, task_id: str, title: str = "", context: WorkflowContext | None = None
+) -> None:
+    """Emit the runner-owned terminal event for a task that was not executed."""
+    child = _child_context(task_id=task_id, parent_task_id=None, context=context)
+    _emit(
+        build_task_event(
+            kind="task.skipped",
+            task_id=task_id,
+            parent_task_id=child.parent_task_id,
+            title=title,
+            context=child,
+        )
+    )
+
+
 @contextmanager
 def workflow_step(
     *,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from sonata_engine.core.compiled import (
@@ -16,7 +17,7 @@ from sonata_engine.core.resource_task import Resource, ResourceOp
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import InvalidTaskOutcomeError, ResumeConfigurationError
 from sonata_engine.journal import Journal, JournalConfig, Verifier
-from sonata_engine.workflow.reporting import task_lifecycle
+from sonata_engine.workflow.reporting import task_lifecycle, task_skipped
 
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 
@@ -96,12 +97,21 @@ class Workflow:
                 pending = [p for p in pending if p is not compiled_task]
                 continue
             try:
-                executions.append(self._run_unit(compiled_task, jrnl, resume=resume))
+                on_executed = None
+                if compiled_task.kind == "acquire":
+                    release_task = release_for[compiled_task.resource]
+                    on_executed = partial(pending.append, release_task)
+                executions.append(
+                    self._run_unit(
+                        compiled_task,
+                        jrnl,
+                        resume=resume,
+                        on_executed=on_executed,
+                    )
+                )
             except BaseException as exc:
                 main_error = exc
                 break
-            if compiled_task.kind == "acquire":
-                pending.append(release_for[compiled_task.resource])
 
         if main_error is not None:
             for compiled_task in reversed(pending):
@@ -121,7 +131,12 @@ class Workflow:
         return jrnl.next_attempt(task_id) if jrnl is not None else 0
 
     def _run_unit(
-        self, compiled_task: CompiledTask[object], jrnl: Journal | None, *, resume: bool
+        self,
+        compiled_task: CompiledTask[object],
+        jrnl: Journal | None,
+        *,
+        resume: bool,
+        on_executed: Callable[[], None] | None = None,
     ) -> TaskExecution:
         """Run one consumer/acquire unit, recording its journal outcome. Raises on failure.
 
@@ -142,6 +157,7 @@ class Workflow:
         if jrnl is not None and resume:
             if jrnl.decide(compiled_task) == "skip":
                 jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
+                task_skipped(task_id=task_id, title=task.title)
                 return TaskExecution(task_id=task_id, status="skipped", outcome=None)
 
         attempt = self._next_attempt(jrnl, task_id)
@@ -151,6 +167,8 @@ class Workflow:
         try:
             with task_lifecycle(task_id=task_id, title=task.title):
                 outcome = task.run()
+                if on_executed is not None:
+                    on_executed()
                 if not isinstance(outcome, TaskOutcome):
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
@@ -193,9 +211,20 @@ class Workflow:
         resource = compiled_task.resource
         if self.keep_infrastructure and resource is not None and resource.infrastructure:
             if jrnl is not None:
-                jrnl.record_skipped(
-                    compiled_task.task_id, jrnl.next_attempt(compiled_task.task_id)
+                self._record_release_outcome(
+                    release_errors,
+                    lambda: jrnl.record_skipped(
+                        compiled_task.task_id,
+                        jrnl.next_attempt(compiled_task.task_id),
+                    ),
                 )
+            try:
+                task_skipped(
+                    task_id=compiled_task.task_id,
+                    title=compiled_task.task.title,
+                )
+            except Exception as exc:
+                release_errors.append(str(exc))
             return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)

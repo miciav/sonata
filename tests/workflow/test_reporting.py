@@ -10,6 +10,7 @@ from sonata_engine.workflow.reporting import (
     phase,
     status,
     task_lifecycle,
+    task_skipped,
     workflow_log,
     workflow_step,
 )
@@ -131,3 +132,13 @@ def test_task_lifecycle_emits_failed_on_keyboard_interrupt() -> None:
 def test_task_lifecycle_is_noop_without_sink() -> None:
     with task_lifecycle(task_id="001.build", title="Build"):
         pass  # no error, no crash
+
+
+def test_task_skipped_emits_canonical_task_identity() -> None:
+    sink = _FakeSink()
+    with bind_workflow_sink(sink):
+        task_skipped(task_id="001.build", title="Build")
+
+    assert [(event.kind, event.task_id) for event in sink.events] == [
+        ("task.skipped", "001.build")
+    ]

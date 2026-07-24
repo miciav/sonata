@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Generator
 
 import pytest
 
@@ -16,6 +18,8 @@ from sonata_engine.errors import (
     UnsupportedJournalSchemaError,
 )
 from sonata_engine.journal import Journal, JournalConfig
+from sonata_engine.workflow.context import bind_workflow_sink
+from sonata_engine.workflow.events import WorkflowEvent
 
 
 class _Tracker(Task[None]):
@@ -41,6 +45,18 @@ class _ReusableTracker(ReusableTask):
     def run(self) -> TaskOutcome[None]:
         self.ran = True
         return TaskOutcome(evidence=self._evidence)
+
+
+class _RecordingSink:
+    def __init__(self) -> None:
+        self.events: list[WorkflowEvent] = []
+
+    def emit(self, event: WorkflowEvent) -> None:
+        self.events.append(event)
+
+    @contextmanager
+    def status(self, _label: str) -> Generator[None, None, None]:
+        yield
 
 
 def _records(path: Path) -> list[dict]:
@@ -134,10 +150,15 @@ def test_injected_exact_value_verifier_enables_skip(tmp_path: Path) -> None:
         workflow_fingerprint=_fingerprint(task),
     )
 
-    _run(task, config, resume=True, verifiers={"exact-value": lambda _e: True})
+    sink = _RecordingSink()
+    with bind_workflow_sink(sink):
+        _run(task, config, resume=True, verifiers={"exact-value": lambda _e: True})
 
     assert task.ran is False
     assert _records(config.path)[-1]["status"] == "skipped"
+    assert [(event.kind, event.task_id) for event in sink.events] == [
+        ("task.skipped", "001.build")
+    ]
 
 
 def test_passed_valid_file_digest_reusable_skips(tmp_path: Path) -> None:
