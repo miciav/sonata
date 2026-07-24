@@ -5,13 +5,18 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
+from sonata_engine.core.compiled import (
+    CompiledTask,
+    CompiledWorkflow,
+    TaskExecution,
+    WorkflowResult,
+)
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource, ResourceOp
-from sonata_engine.core.task import Task
+from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import InvalidTaskOutcomeError, ResumeConfigurationError
 from sonata_engine.journal import Journal, JournalConfig, Verifier
-from sonata_engine.workflow.reporting import task_lifecycle, workflow_step
+from sonata_engine.workflow.reporting import task_lifecycle
 
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 
@@ -22,81 +27,38 @@ def _slugify(title: str) -> str:
 
 @dataclass
 class Workflow:
-    """Sequential task executor with optional always-run cleanup tasks, plus a
-    task-definition builder/compiler.
+    """Ordered workflow builder, compiler, and executor."""
 
-    tasks run in order; execution stops at the first failure.
-    cleanup_tasks always run, unconditionally, even after a failure in tasks --
-    `keep_infrastructure` does not affect this legacy loop; it only retains
-    `infrastructure`-flagged `Resource`s in the compiled `run_compiled()` path.
-
-    `add()`/`compile()`/`run_compiled()` are a separate, coexisting concern:
-    they record ordered `Task` definitions (with the `Resource`s each consumes)
-    and turn them into an immutable `CompiledWorkflow` with compiler-assigned
-    IDs. Task objects never carry their own ID.
-
-    This is a deliberate, transitional split, not two permanent parallel APIs:
-    `run()` stays only because callers/tests predating the compiler still use it.
-    New code should use `add()`/`compile()`/`run_compiled()`.
-    """
-
-    # ponytail: `tasks`/`cleanup_tasks` accept duck-typed executor steps, not only `Task`
-    # instances -- typed `Any` rather than `Task` to match that real, pre-existing contract.
-    tasks: list[Any]
-    # ponytail: default "" (not a required field) so untouched callers that never compile()
-    # keep working; compile() fails loud on an empty workflow_id instead.
-    workflow_id: str = ""
-    cleanup_tasks: list[Any] = field(default_factory=list)
+    workflow_id: str
     keep_infrastructure: bool = False
     _definitions: list[tuple[Task[Any], tuple[Resource, ...]]] = field(
         default_factory=list, init=False, repr=False
     )
 
-    @property
-    def task_ids(self) -> list[str]:
-        return [t.task_id for t in self.tasks + self.cleanup_tasks]
+    def run(
+        self,
+        *,
+        journal: JournalConfig | None = None,
+        resume: bool = False,
+        verifiers: Mapping[str, Verifier] | None = None,
+    ) -> WorkflowResult:
+        """Compile and run this workflow using compiler-owned task identities."""
+        return self._run_compiled(
+            self.compile(),
+            journal=journal,
+            resume=resume,
+            verifiers=verifiers,
+        )
 
-    @property
-    def phase_titles(self) -> list[str]:
-        return [t.title for t in self.tasks + self.cleanup_tasks]
-
-    def run(self) -> None:
-        main_error: BaseException | None = None
-
-        for task in self.tasks:
-            try:
-                with workflow_step(task_id=task.task_id, title=task.title):
-                    task.run()
-            except BaseException as exc:
-                main_error = exc
-                break
-
-        cleanup_errors: list[str] = []
-        for task in self.cleanup_tasks:
-            try:
-                with workflow_step(task_id=task.task_id, title=task.title):
-                    task.run()
-            except Exception as exc:
-                cleanup_errors.append(str(exc))
-
-        if main_error is not None:
-            if cleanup_errors:
-                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(cleanup_errors)
-                raise RuntimeError(combined) from main_error
-            raise main_error
-
-        if cleanup_errors:
-            raise RuntimeError("Cleanup failed:\n" + "\n".join(cleanup_errors))
-
-    def run_compiled(
+    def _run_compiled(
         self,
         compiled: CompiledWorkflow,
         *,
         journal: JournalConfig | None = None,
         resume: bool = False,
         verifiers: Mapping[str, Verifier] | None = None,
-    ) -> None:
-        """Run a `CompiledWorkflow`'s tasks in order, owning their lifecycle events.
+    ) -> WorkflowResult:
+        """Run compiled tasks in order, owning their lifecycle events.
 
         With no `journal` and `resume=False` this behaves exactly as before -- the
         journal is optional. When a `journal` is configured the runner records every
@@ -124,14 +86,17 @@ class Workflow:
         pending: list[CompiledTask[object]] = []
         release_errors: list[str] = []
         main_error: BaseException | None = None
+        executions: list[TaskExecution] = []
 
         for compiled_task in compiled.tasks:
             if compiled_task.kind == "release":
-                self._release(compiled_task, release_errors, jrnl)
+                execution = self._release(compiled_task, release_errors, jrnl)
+                if execution is not None:
+                    executions.append(execution)
                 pending = [p for p in pending if p is not compiled_task]
                 continue
             try:
-                self._run_unit(compiled_task, jrnl, resume=resume)
+                executions.append(self._run_unit(compiled_task, jrnl, resume=resume))
             except BaseException as exc:
                 main_error = exc
                 break
@@ -150,13 +115,14 @@ class Workflow:
 
         if release_errors:
             raise RuntimeError("Cleanup failed:\n" + "\n".join(release_errors))
+        return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
     def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
         return jrnl.next_attempt(task_id) if jrnl is not None else 0
 
     def _run_unit(
         self, compiled_task: CompiledTask[object], jrnl: Journal | None, *, resume: bool
-    ) -> None:
+    ) -> TaskExecution:
         """Run one consumer/acquire unit, recording its journal outcome. Raises on failure.
 
         Only `consumer` units consult prior journal state for a skip/retry decision.
@@ -177,7 +143,7 @@ class Workflow:
             if compiled_task.kind == "consumer":
                 if jrnl.decide(compiled_task) == "skip":
                     jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-                    return
+                    return TaskExecution(task_id=task_id, status="skipped", outcome=None)
             elif compiled_task.kind == "acquire":
                 jrnl.guard_not_ambiguous(task_id)
 
@@ -192,12 +158,17 @@ class Workflow:
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
                     )
+                if isinstance(task, ReusableTask) and outcome.value is not None:
+                    raise InvalidTaskOutcomeError(
+                        f"{task_id} is reusable and returned a runtime value"
+                    )
         except BaseException:
             if jrnl is not None:
                 jrnl.record_failed(task_id, attempt)
             raise
         if jrnl is not None:
             jrnl.record_passed(task_id, attempt, outcome.evidence)
+        return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
 
     def _record_release_outcome(
         self, release_errors: list[str], record: Callable[[], None]
@@ -216,7 +187,7 @@ class Workflow:
         compiled_task: CompiledTask[object],
         release_errors: list[str],
         jrnl: Journal | None = None,
-    ) -> None:
+    ) -> TaskExecution | None:
         """Run one release unit, honoring infrastructure retention, collecting errors.
 
         A release is a non-reusable finalizer: it always runs, never consults prior
@@ -224,7 +195,7 @@ class Workflow:
         """
         resource = compiled_task.resource
         if self.keep_infrastructure and resource is not None and resource.infrastructure:
-            return
+            return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)
         if jrnl is not None:
@@ -233,7 +204,11 @@ class Workflow:
             )
         try:
             with task_lifecycle(task_id=task_id, title=compiled_task.task.title):
-                compiled_task.task.run()
+                outcome = compiled_task.task.run()
+                if not isinstance(outcome, TaskOutcome):
+                    raise InvalidTaskOutcomeError(
+                        f"{task_id} returned {outcome!r}, expected TaskOutcome"
+                    )
         except Exception as exc:
             release_errors.append(str(exc))
             if jrnl is not None:
@@ -245,6 +220,8 @@ class Workflow:
                 self._record_release_outcome(
                     release_errors, lambda: jrnl.record_passed(task_id, attempt)
                 )
+            return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
+        return None
 
     def add(self, task: Task[Any], requires: tuple[Resource, ...] = ()) -> Workflow:
         """Record a task definition and the resources it consumes. Order preserved."""

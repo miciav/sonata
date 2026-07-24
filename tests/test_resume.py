@@ -75,9 +75,9 @@ def _seed(
 
 
 def _run(task: Task[None], config: JournalConfig, **kwargs: object) -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(task)
-    workflow.run_compiled(workflow.compile(), journal=config, **kwargs)  # type: ignore[arg-type]
+    workflow.run( journal=config, **kwargs)  # type: ignore[arg-type]
 
 
 # --- Resume matrix -----------------------------------------------------------
@@ -198,11 +198,11 @@ def test_acquire_started_only_raises_ambiguous_and_never_reruns(tmp_path: Path) 
         acquire=lambda: calls.append("acquire"),
         release=lambda: calls.append("release"),
     )
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Use vm"), requires=(resource,))
 
     with pytest.raises(AmbiguousTaskStateError):
-        workflow.run_compiled(workflow.compile(), journal=config, resume=True)
+        workflow.run( journal=config, resume=True)
 
     assert calls == []
 
@@ -218,10 +218,10 @@ def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
         acquire=lambda: calls.append("acquire"),
         release=lambda: calls.append("release"),
     )
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Use vm"), requires=(resource,))
 
-    workflow.run_compiled(workflow.compile(), journal=config, resume=True)
+    workflow.run( journal=config, resume=True)
 
     assert "acquire" in calls
 
@@ -246,7 +246,7 @@ def test_release_journal_failure_does_not_mask_main_error_or_abort_cleanup(
         def run(self) -> TaskOutcome[None]:
             raise RuntimeError("consume failed")
 
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_FailTask(), requires=(resource,))
     compiled = workflow.compile()
     release_id = next(ct.task_id for ct in compiled.tasks if ct.kind == "release")
@@ -261,7 +261,7 @@ def test_release_journal_failure_does_not_mask_main_error_or_abort_cleanup(
     monkeypatch.setattr(Journal, "record_started", _flaky_record_started)
 
     with pytest.raises(RuntimeError, match="consume failed"):
-        workflow.run_compiled(compiled, journal=config)
+        workflow.run( journal=config)
 
     assert "release" in calls  # cleanup still ran despite the journal write failure
 
@@ -326,11 +326,11 @@ def test_injected_verifier_enables_skip(tmp_path: Path) -> None:
 
 
 def test_resume_without_journal_raises() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Build"))
 
     with pytest.raises(ResumeConfigurationError):
-        workflow.run_compiled(workflow.compile(), resume=True)
+        workflow.run( resume=True)
 
 
 def test_schema_v1_is_rejected(tmp_path: Path) -> None:

@@ -1,4 +1,9 @@
-from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
+from sonata_engine.core.compiled import (
+    CompiledTask,
+    CompiledWorkflow,
+    TaskExecution,
+    WorkflowResult,
+)
 from sonata_engine.core.outcome import Evidence, TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
@@ -11,6 +16,8 @@ __all__ = [
     "Resource",
     "ReusableTask",
     "Task",
+    "TaskExecution",
     "TaskOutcome",
     "Workflow",
+    "WorkflowResult",
 ]

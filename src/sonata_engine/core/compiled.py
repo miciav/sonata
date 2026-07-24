@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
+from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import Task
 
 T = TypeVar("T")
 
 TaskKind = Literal["consumer", "acquire", "release"]
+TaskExecutionStatus = Literal["passed", "skipped"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,3 +38,26 @@ class CompiledWorkflow:
 
     workflow_id: str
     tasks: tuple[CompiledTask[object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TaskExecution:
+    """The runtime result of one compiled task unit."""
+
+    task_id: str
+    status: TaskExecutionStatus
+    outcome: TaskOutcome[Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowResult:
+    """Immutable results from one successful workflow run."""
+
+    workflow_id: str
+    tasks: tuple[TaskExecution, ...]
+
+    def by_id(self, task_id: str) -> TaskExecution:
+        for execution in self.tasks:
+            if execution.task_id == task_id:
+                return execution
+        raise KeyError(task_id)

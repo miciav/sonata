@@ -33,7 +33,7 @@ def _resource(name: str, calls: list[str], *, infrastructure: bool = False) -> R
 
 
 def _workflow(**kwargs: object) -> Workflow:
-    return Workflow(tasks=[], workflow_id="wf", **kwargs)  # type: ignore[arg-type]
+    return Workflow(workflow_id="wf", **kwargs)  # type: ignore[arg-type]
 
 
 # --- Step 1: topology --------------------------------------------------------
@@ -139,7 +139,7 @@ def test_releases_run_in_reverse_acquisition_order() -> None:
     workflow = _workflow()
     workflow.add(_RecordTask("Use", calls), requires=(first, second))
 
-    workflow.run_compiled(workflow.compile())
+    workflow.run()
 
     assert calls == [
         "acquire.first",
@@ -160,7 +160,7 @@ def test_consumer_failure_releases_acquired_in_reverse() -> None:
     workflow.add(_RecordTask("Boom", calls, fail=True), requires=(first, second))
 
     with pytest.raises(RuntimeError, match="Boom failed"):
-        workflow.run_compiled(workflow.compile())
+        workflow.run()
 
     assert calls == [
         "acquire.first",
@@ -190,7 +190,7 @@ def test_acquire_failure_releases_earlier_resources_only() -> None:
     workflow.add(_RecordTask("B", calls), requires=(bad,))
 
     with pytest.raises(RuntimeError, match="acquire exploded"):
-        workflow.run_compiled(workflow.compile())
+        workflow.run()
 
     assert calls == ["acquire.good", "A", "release.good"]
     assert "release.bad" not in calls
@@ -205,7 +205,7 @@ def test_consumer_failure_and_release_failure_are_combined() -> None:
     workflow.add(_RecordTask("Boom", [], fail=True), requires=(resource,))
 
     with pytest.raises(RuntimeError) as exc_info:
-        workflow.run_compiled(workflow.compile())
+        workflow.run()
 
     assert "Boom failed" in str(exc_info.value)
     assert "release failed" in str(exc_info.value)
@@ -220,7 +220,7 @@ def test_release_failure_alone_is_raised() -> None:
     workflow.add(_RecordTask("Use", []), requires=(resource,))
 
     with pytest.raises(RuntimeError, match="Cleanup failed"):
-        workflow.run_compiled(workflow.compile())
+        workflow.run()
 
 
 def test_keep_infrastructure_retains_infra_but_releases_safety() -> None:
@@ -230,7 +230,7 @@ def test_keep_infrastructure_retains_infra_but_releases_safety() -> None:
     workflow = _workflow(keep_infrastructure=True)
     workflow.add(_RecordTask("Use", calls), requires=(vm, port_forward))
 
-    workflow.run_compiled(workflow.compile())
+    workflow.run()
 
     assert calls == ["acquire.vm", "acquire.port-forward", "Use", "release.port-forward"]
     assert "release.vm" not in calls
@@ -244,7 +244,7 @@ def test_keep_infrastructure_still_releases_safety_after_failure() -> None:
     workflow.add(_RecordTask("Boom", calls, fail=True), requires=(vm, port_forward))
 
     with pytest.raises(RuntimeError, match="Boom failed"):
-        workflow.run_compiled(workflow.compile())
+        workflow.run()
 
     assert "release.port-forward" in calls
     assert "release.vm" not in calls

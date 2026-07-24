@@ -7,8 +7,10 @@ from sonata_engine.core import (
     Resource,
     ReusableTask,
     Task,
+    TaskExecution,
     TaskOutcome,
     Workflow,
+    WorkflowResult,
 )
 from sonata_engine.errors import (
     AmbiguousTaskStateError,
@@ -41,6 +43,7 @@ __all__ = [
     "ReusableTask",
     "Task",
     "TaskDefinition",
+    "TaskExecution",
     "TaskOutcome",
     "TaskRun",
     "UnsupportedJournalSchemaError",
@@ -51,5 +54,6 @@ __all__ = [
     "WorkflowRun",
     "WorkflowSink",
     "WorkflowState",
+    "WorkflowResult",
     "__version__",
 ]

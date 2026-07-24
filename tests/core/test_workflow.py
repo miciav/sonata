@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Generator
 
 import pytest
 
 from sonata_engine.core.outcome import TaskOutcome
-from sonata_engine.core.task import Task
+from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
 from sonata_engine.errors import InvalidTaskOutcomeError
 from sonata_engine.workflow.context import bind_workflow_sink
@@ -24,25 +23,23 @@ class _NoopTask(Task[None]):
         return TaskOutcome()
 
 
-@dataclass
-class _OkTask:
-    task_id: str
-    title: str
-    calls: list[str]
+class _ValueTask(Task[int]):
+    title = "Produce value"
 
-    def run(self) -> None:
-        self.calls.append(self.task_id)
+    def run(self) -> TaskOutcome[int]:
+        return TaskOutcome(value=42)
 
 
-@dataclass
-class _FailTask:
-    task_id: str
-    title: str
-    calls: list[str]
+def test_run_is_the_single_v2_entrypoint_and_preserves_outcomes() -> None:
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_ValueTask())
 
-    def run(self) -> None:
-        self.calls.append(self.task_id)
-        raise RuntimeError(f"{self.task_id} failed")
+    result = workflow.run()
+
+    execution = result.by_id("001.produce-value")
+    assert execution.status == "passed"
+    assert execution.outcome == TaskOutcome(value=42)
+    assert not hasattr(workflow, "run_compiled")
 
 
 def test_invalid_task_outcome_error_is_not_re_exported_from_workflow_module() -> None:
@@ -53,136 +50,11 @@ def test_invalid_task_outcome_error_is_not_re_exported_from_workflow_module() ->
     assert "InvalidTaskOutcomeError" not in vars(workflow_module).get("__all__", ())
 
 
-def test_workflow_runs_tasks_in_order() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[
-            _OkTask(task_id="a", title="A", calls=calls),
-            _OkTask(task_id="b", title="B", calls=calls),
-            _OkTask(task_id="c", title="C", calls=calls),
-        ]
-    )
-    workflow.run()
-    assert calls == ["a", "b", "c"]
-
-
-def test_workflow_stops_on_first_failure() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[
-            _OkTask(task_id="a", title="A", calls=calls),
-            _FailTask(task_id="b", title="B", calls=calls),
-            _OkTask(task_id="c", title="C", calls=calls),
-        ]
-    )
-    with pytest.raises(RuntimeError, match="b failed"):
-        workflow.run()
-    assert calls == ["a", "b"]
-    assert "c" not in calls
-
-
-def test_workflow_cleanup_tasks_always_run() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[
-            _OkTask(task_id="a", title="A", calls=calls),
-            _FailTask(task_id="b", title="B", calls=calls),
-        ],
-        cleanup_tasks=[
-            _OkTask(task_id="cleanup", title="Cleanup", calls=calls),
-        ],
-    )
-    with pytest.raises(RuntimeError, match="b failed"):
-        workflow.run()
-    assert "cleanup" in calls
-
-
-def test_workflow_cleanup_runs_after_success_too() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[_OkTask(task_id="a", title="A", calls=calls)],
-        cleanup_tasks=[_OkTask(task_id="cleanup", title="Cleanup", calls=calls)],
-    )
-    workflow.run()
-    assert calls == ["a", "cleanup"]
-
-
-def test_keep_infrastructure_does_not_skip_static_cleanup_tasks() -> None:
-    """`keep_infrastructure` only retains `infrastructure`-flagged `Resource`s in the
-    compiled `run_compiled()` path; the legacy `cleanup_tasks` list is unconditional."""
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[_OkTask(task_id="a", title="A", calls=calls)],
-        cleanup_tasks=[_OkTask(task_id="cleanup", title="Cleanup", calls=calls)],
-        keep_infrastructure=True,
-    )
-
-    workflow.run()
-
-    assert calls == ["a", "cleanup"]
-
-
-def test_workflow_task_ids_includes_all_tasks() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[
-            _OkTask(task_id="a", title="A", calls=calls),
-            _OkTask(task_id="b", title="B", calls=calls),
-        ],
-        cleanup_tasks=[
-            _OkTask(task_id="cleanup", title="Cleanup", calls=calls),
-        ],
-    )
-    assert workflow.task_ids == ["a", "b", "cleanup"]
-
-
-def test_workflow_phase_titles_includes_all_tasks() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[
-            _OkTask(task_id="a", title="A", calls=calls),
-            _OkTask(task_id="b", title="B", calls=calls),
-        ],
-        cleanup_tasks=[
-            _OkTask(task_id="cleanup", title="Cleanup", calls=calls),
-        ],
-    )
-    assert workflow.phase_titles == ["A", "B", "Cleanup"]
-
-
-def test_workflow_cleanup_error_raised_after_main_error() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[_FailTask(task_id="main", title="Main", calls=calls)],
-        cleanup_tasks=[_FailTask(task_id="cleanup", title="Cleanup", calls=calls)],
-    )
-    with pytest.raises(RuntimeError) as exc_info:
-        workflow.run()
-    assert "main failed" in str(exc_info.value)
-    assert "cleanup failed" in str(exc_info.value)
-
-
-def test_workflow_with_no_tasks_runs_cleanly() -> None:
-    workflow = Workflow(tasks=[])
-    workflow.run()  # should not raise
-
-
-def test_workflow_cleanup_only_failure_raised() -> None:
-    calls: list[str] = []
-    workflow = Workflow(
-        tasks=[_OkTask(task_id="a", title="A", calls=calls)],
-        cleanup_tasks=[_FailTask(task_id="cleanup", title="Cleanup", calls=calls)],
-    )
-    with pytest.raises(RuntimeError, match="Cleanup failed"):
-        workflow.run()
-    assert calls == ["a", "cleanup"]
-
-
 # --- Compiler: add()/compile() -------------------------------------------
 
 
 def test_compile_preserves_insertion_order() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_NoopTask("Prepare source"))
     workflow.add(_NoopTask("Build amd64"))
     workflow.add(_NoopTask("Publish manifest"))
@@ -197,7 +69,7 @@ def test_compile_preserves_insertion_order() -> None:
 
 
 def test_compile_generates_ordinal_slug_ids() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_NoopTask("Prepare source"))
     workflow.add(_NoopTask("Build amd64"))
     workflow.add(_NoopTask("Publish manifest"))
@@ -212,7 +84,7 @@ def test_compile_generates_ordinal_slug_ids() -> None:
 
 
 def test_compile_disambiguates_duplicate_titles_by_ordinal() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_NoopTask("Build"))
     workflow.add(_NoopTask("Build"))
 
@@ -225,7 +97,7 @@ def test_compile_disambiguates_duplicate_titles_by_ordinal() -> None:
 
 def test_task_objects_expose_no_task_id() -> None:
     task_instance = _NoopTask("Prepare source")
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(task_instance)
 
     compiled = workflow.compile()
@@ -235,7 +107,7 @@ def test_task_objects_expose_no_task_id() -> None:
 
 
 def test_repeated_compilation_is_deterministic() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_NoopTask("Prepare source"))
     workflow.add(_NoopTask("Build amd64"))
 
@@ -247,14 +119,14 @@ def test_repeated_compilation_is_deterministic() -> None:
 
 
 def test_compile_requires_non_empty_workflow_id() -> None:
-    workflow = Workflow(tasks=[])
+    workflow = Workflow(workflow_id="")
     workflow.add(_NoopTask("Prepare source"))
 
     with pytest.raises(ValueError, match="workflow_id"):
         workflow.compile()
 
 
-# --- run_compiled(): lifecycle events -------------------------------------
+# --- run(): lifecycle events ----------------------------------------------
 
 
 class _FakeSink:
@@ -283,60 +155,70 @@ class _BadOutcomeTask(Task[None]):
         return "not-an-outcome"  # type: ignore[return-value]
 
 
-def test_run_compiled_emits_started_then_passed() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+class _BadReusableValue(ReusableTask):
+    title = "Bad reusable value"
+
+    def run(self) -> TaskOutcome[None]:
+        return TaskOutcome(value=42)  # type: ignore[arg-type]
+
+
+def test_run_emits_started_then_passed() -> None:
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_NoopTask("Prepare source"))
-    compiled = workflow.compile()
 
     sink = _FakeSink()
     with bind_workflow_sink(sink):
-        workflow.run_compiled(compiled)
+        workflow.run()
 
     assert [e.kind for e in sink.events] == ["task.started", "task.passed"]
     assert all(e.task_id == "001.prepare-source" for e in sink.events)
 
 
-def test_run_compiled_emits_failed_on_exception_and_propagates() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+def test_run_emits_failed_on_exception_and_propagates() -> None:
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_BoomTask())
-    compiled = workflow.compile()
 
     sink = _FakeSink()
     with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom"):
-        workflow.run_compiled(compiled)
+        workflow.run()
 
     assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
     assert all(e.task_id == "001.boom" for e in sink.events)
 
 
-def test_run_compiled_rejects_non_task_outcome_result() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+def test_run_rejects_non_task_outcome_result() -> None:
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_BadOutcomeTask())
-    compiled = workflow.compile()
 
     sink = _FakeSink()
     with bind_workflow_sink(sink), pytest.raises(InvalidTaskOutcomeError):
-        workflow.run_compiled(compiled)
+        workflow.run()
 
     assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
 
 
-def test_run_compiled_stops_on_first_failure() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+def test_run_rejects_runtime_values_from_reusable_tasks() -> None:
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_BadReusableValue())
+
+    with pytest.raises(InvalidTaskOutcomeError, match="reusable"):
+        workflow.run()
+
+
+def test_run_stops_on_first_failure() -> None:
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_BoomTask())
     workflow.add(_NoopTask("Never runs"))
-    compiled = workflow.compile()
 
     sink = _FakeSink()
     with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom"):
-        workflow.run_compiled(compiled)
+        workflow.run()
 
     assert [e.kind for e in sink.events] == ["task.started", "task.failed"]
 
 
-def test_run_compiled_is_noop_safe_without_sink() -> None:
-    workflow = Workflow(tasks=[], workflow_id="wf")
+def test_run_is_noop_safe_without_sink() -> None:
+    workflow = Workflow(workflow_id="wf")
     workflow.add(_NoopTask("Prepare source"))
-    compiled = workflow.compile()
 
-    workflow.run_compiled(compiled)  # no sink bound, must not raise
+    workflow.run()  # no sink bound, must not raise
