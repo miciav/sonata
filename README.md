@@ -118,7 +118,8 @@ continuing, while any complete malformed record raises `CorruptJournalError`.
 Runtime values (including `TaskOutcome.value` and acquired resource values) are
 in-process only: they are not journaled and are not reconstructed by resume. Make
 resumed work depend on durable, verifier-backed evidence rather than a prior runtime
-value.
+value. Resource acquire callbacks run again on resume, yielding fresh in-process
+values for the resumed run.
 
 Sonata only includes the generic `file-digest` verifier. Domain evidence such as OCI
 artifacts must be verified by an injected downstream verifier.
