@@ -34,7 +34,6 @@ class _RunState:
     """Runner-private mutable resource values for one workflow execution."""
 
     values: dict[int, object] = field(default_factory=dict)
-    _missing: object = field(default_factory=object, init=False, repr=False)
 
     def inputs_for(self, accessible: tuple[Resource[Any], ...]) -> TaskInputs:
         return TaskInputs._for_resource_values(self.values, accessible)
@@ -42,8 +41,9 @@ class _RunState:
     def publish(self, resource: Resource[Any], value: object) -> None:
         self.values[id(resource)] = value
 
-    def remove(self, resource: Resource[Any]) -> object:
-        return self.values.pop(id(resource), self._missing)
+    def remove(self, resource: Resource[Any]) -> None:
+        """Drop the reference so a large acquired value can be collected."""
+        self.values.pop(id(resource), None)
 
 
 def _slugify(title: str) -> str:
@@ -440,6 +440,12 @@ class Workflow:
         discovery: list[int] = []
         colors: dict[int, str] = {}
         stack: list[Resource[Any]] = []
+        # Index at which a 'done' node's subtree was last re-walked to refresh
+        # first/last. Re-encountering the same node at the SAME index is a no-op:
+        # its subtree was already refreshed for this index via some other path.
+        # Without this, a diamond-shaped graph re-walks whole shared subtrees on
+        # every path to them, doubling work per level -- exponential in depth.
+        seen_at_index: dict[int, int] = {}
 
         def register(resource: Resource[Any], index: int) -> None:
             key = id(resource)
@@ -459,7 +465,9 @@ class Workflow:
                 colors[key] = "done"
                 resources[key] = resource
                 discovery.append(key)
-            else:
+                seen_at_index[key] = index
+            elif seen_at_index.get(key) != index:
+                seen_at_index[key] = index
                 for dependency in resource.requires:
                     register(dependency, index)
             first.setdefault(key, index)

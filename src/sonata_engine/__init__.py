@@ -18,6 +18,7 @@ from sonata_engine.errors import (
     AmbiguousTaskStateError,
     CorruptJournalError,
     InvalidTaskOutcomeError,
+    MissingAcquireUnitError,
     ResourceDependencyCycleError,
     ResourceUnavailableError,
     ResumeConfigurationError,
@@ -37,7 +38,7 @@ from sonata_engine.workflow import (
     WorkflowState,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "AmbiguousTaskStateError",
@@ -47,6 +48,7 @@ __all__ = [
     "Evidence",
     "InvalidTaskOutcomeError",
     "JournalConfig",
+    "MissingAcquireUnitError",
     "Resource",
     "ResourceDependencyCycleError",
     "ResourceUnavailableError",

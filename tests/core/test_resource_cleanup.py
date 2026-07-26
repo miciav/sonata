@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
@@ -666,3 +667,106 @@ def test_finalizer_base_exception_remains_primary_after_task_failure() -> None:
 
     assert calls[-2:] == ["release.second", "release.first"]
     assert any("Main failed" in note for note in exc_info.value.__notes__)
+
+
+# --- Step 3: dependency chain on the failure path ----------------------------
+
+
+def test_dependency_chain_releases_in_reverse_on_failure_path() -> None:
+    """A fn -> helm -> vm resource chain releases through the runner's `pending`
+    list (the failure path), not the linear release units the passing tests
+    exercise. Release order must still be reverse-acquisition, and each release
+    must still be able to read its dependency's value."""
+    calls: list[str] = []
+
+    vm = Resource(
+        title="Acquire vm",
+        acquire=lambda _inputs: calls.append("acquire.vm") or "vm-value",
+        release=lambda _inputs, value: calls.append(f"release.vm:{value}"),
+    )
+    helm = Resource(
+        title="Acquire helm",
+        acquire=lambda inputs: calls.append(f"acquire.helm:{inputs.resource(vm)}")
+        or "helm-value",
+        release=lambda inputs, value: calls.append(f"release.helm:{value}:{inputs.resource(vm)}"),
+        requires=(vm,),
+    )
+    fn = Resource(
+        title="Acquire fn",
+        acquire=lambda inputs: calls.append(f"acquire.fn:{inputs.resource(helm)}") or "fn-value",
+        release=lambda inputs, value: calls.append(f"release.fn:{value}:{inputs.resource(helm)}"),
+        requires=(helm,),
+    )
+    workflow = _workflow()
+    workflow.add(_RecordTask("Boom", calls, fail=True), requires=(fn,))
+
+    with pytest.raises(RuntimeError, match="Boom failed"):
+        workflow.run()
+
+    assert calls == [
+        "acquire.vm",
+        "acquire.helm:vm-value",
+        "acquire.fn:helm-value",
+        "Boom",
+        "release.fn:fn-value:helm-value",
+        "release.helm:helm-value:vm-value",
+        "release.vm:vm-value",
+    ]
+
+
+# --- Step 4: compiler performance on deep resource graphs --------------------
+
+
+def _diamond_resource(depth: int) -> Resource:
+    """A `depth`-level diamond: each level's combiner `c{level}` requires two
+    siblings `a{level}`/`b{level}` that both require the previous level's
+    combiner. `register()` re-walking a 'done' node's whole subtree on every
+    path to it (instead of returning early) doubles the work per level on a
+    graph shaped like this -- exponential in `depth`.
+    """
+    current = Resource(
+        title="Acquire leaf", acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+    )
+    for level in range(depth):
+        a = Resource(
+            title=f"Acquire a{level}",
+            acquire=lambda _inputs: None,
+            release=lambda _inputs, _value: None,
+            requires=(current,),
+        )
+        b = Resource(
+            title=f"Acquire b{level}",
+            acquire=lambda _inputs: None,
+            release=lambda _inputs, _value: None,
+            requires=(current,),
+        )
+        current = Resource(
+            title=f"Acquire c{level}",
+            acquire=lambda _inputs: None,
+            release=lambda _inputs, _value: None,
+            requires=(a, b),
+        )
+    return current
+
+
+def test_deep_diamond_resource_graph_compiles_deterministically_and_fast() -> None:
+    depth = 40
+    resource = _diamond_resource(depth)
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", []), requires=(resource,))
+
+    start = time.perf_counter()
+    first = workflow.compile()
+    elapsed = time.perf_counter() - start
+    second = workflow.compile()
+
+    resource_count = 1 + 3 * depth  # leaf + (a, b, c) per level
+    expected_task_count = 2 * resource_count + 1  # acquire + release per resource + consumer
+
+    assert first == second, "same definitions in must produce same compiled IDs out"
+    assert len(first.tasks) == expected_task_count
+    assert first.tasks[0].task.title == "Acquire leaf"
+    assert first.tasks[resource_count].task_id == f"{resource_count + 1:03d}.use"
+    # Regression guard: pre-fix this graph was exponential in depth (depth=26 took
+    # ~34s in measurement); post-fix it stays well under a second even at depth=40.
+    assert elapsed < 2.0, f"compile() took {elapsed:.2f}s -- exponential blowup regression?"

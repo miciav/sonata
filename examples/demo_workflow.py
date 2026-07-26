@@ -6,13 +6,13 @@ Run with:
 
 from __future__ import annotations
 
-from sonata_engine import Resource, Task, TaskOutcome, Workflow
+from sonata_engine import Resource, Task, TaskInputs, TaskOutcome, Workflow
 
 
 class PrepareSource(Task[str]):
     title = "Prepare source"
 
-    def run(self) -> TaskOutcome[str]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
         print("  preparing source tree...")
         return TaskOutcome(value="/tmp/src")
 
@@ -20,23 +20,24 @@ class PrepareSource(Task[str]):
 class Build(Task[str]):
     title = "Build image"
 
-    def run(self) -> TaskOutcome[str]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
         print("  building image...")
         return TaskOutcome(value="registry.example/demo:v1")
 
 
-def _start_builder_vm() -> None:
+def _start_builder_vm(inputs: TaskInputs) -> str:
     print("  [resource] builder VM up")
+    return "builder-vm-1"
 
 
-def _stop_builder_vm() -> None:
-    print("  [resource] builder VM down")
+def _stop_builder_vm(inputs: TaskInputs, vm_id: str) -> None:
+    print(f"  [resource] builder VM down ({vm_id})")
 
 
 class PushImage(Task[None]):
     title = "Push image"
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         print("  pushing image (needs the builder VM)...")
         return TaskOutcome()
 

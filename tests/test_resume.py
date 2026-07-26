@@ -517,3 +517,25 @@ def test_schema_v1_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(UnsupportedJournalSchemaError):
         _run(task, config, resume=True)
+
+
+def test_non_resume_run_warns_on_fingerprint_mismatch(tmp_path: Path) -> None:
+    """A non-resume run against a journal from a different (e.g. pre-upgrade)
+    topology doesn't raise -- but it must not stay silent either: it ignores the
+    stale records and appends a new topology into the same file."""
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = _Tracker("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        workflow_fingerprint="sha256:" + "0" * 64,
+    )
+
+    with pytest.warns(UserWarning, match="ignoring them and appending"):
+        _run(task, config)
+
+    assert task.ran is True
+    records = _records(config.path)
+    fingerprints = {record["workflow_fingerprint"] for record in records}
+    assert fingerprints == {"sha256:" + "0" * 64, _fingerprint(task)}

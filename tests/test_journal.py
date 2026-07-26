@@ -181,7 +181,8 @@ def test_changed_topology_does_not_reject_a_non_resuming_run(tmp_path: Path) -> 
     changed.add(_Ok("Prepare"))
     changed.add(_Ok("Build"))
 
-    changed.run(journal=config)  # resume=False (default) -- must not raise
+    with pytest.warns(UserWarning, match="ignoring them and appending"):
+        changed.run(journal=config)  # resume=False (default) -- must not raise
 
     records = [r for r in _records(config.path) if r["task_id"] == "001.prepare"]
     assert any(r["status"] == "passed" for r in records)

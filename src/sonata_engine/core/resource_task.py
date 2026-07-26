@@ -12,13 +12,19 @@ from sonata_engine.core.task import Task
 T = TypeVar("T")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class Resource(Generic[T]):
     """A pair of acquire/release side effects a task depends on.
 
     A `Resource` is not itself added to a workflow; consumer tasks reference it
     via `Workflow.add(task, requires=(resource,))`. `compile()` splices an
     acquire unit before the first consumer and a release unit after the last.
+
+    Identity semantics (`eq=False`): the compiler keys resources by `id()` and
+    deliberately treats two structurally identical `Resource` instances as
+    distinct (each gets its own acquire/release pair and runtime value). Value
+    equality would contradict that -- and would also make `hash()` recurse
+    forever on a cyclic `requires` graph.
     """
 
     title: str

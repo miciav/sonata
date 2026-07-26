@@ -9,6 +9,22 @@ packages such as nanoFaaS.
 - Runtime dependencies: none
 - Python: 3.12+
 
+## Breaking change in 0.2.0
+
+`0.2.0` changes two call signatures with no compatibility shim. Pre-existing code
+must be migrated before upgrading:
+
+- `Task.run(self)` -> `Task.run(self, inputs: TaskInputs)`. Every concrete task's
+  `run` now takes the workflow's `TaskInputs` as its one argument.
+- `Resource(acquire=lambda: ..., release=lambda: ...)` ->
+  `Resource(acquire=lambda inputs: ..., release=lambda inputs, value: ...)`. `acquire`
+  now takes `TaskInputs` and returns the resource's runtime value; `release` now takes
+  `TaskInputs` and that same value.
+
+Old-shape code raises `TypeError` at call time (e.g. `run() takes 1 positional
+argument but 2 were given`) rather than silently misbehaving, so the break is loud.
+This is what makes `TaskInputs`/`Resource` dependencies (below) possible at all.
+
 ## v2 workflow API
 
 `Workflow.run()` is the only execution entry point. Tasks have no declared IDs:
@@ -119,6 +135,17 @@ Each task starts with attempt `0`, status `pending`; later attempts append lifec
 records. Every record carries a deterministic workflow fingerprint, and resume fails
 if the ordered task topology or task type changed. A torn final line is removed before
 continuing, while any complete malformed record raises `CorruptJournalError`.
+
+**Upgrading Sonata invalidates existing journals.** The fingerprint is derived from
+the compiled topology, which includes the engine's own internal shape (for example,
+adding resource-dependency edges in `0.2.0` changed the fingerprint of every
+workflow, even ones that declare no resources). With `resume=True` a fingerprint
+mismatch raises `WorkflowTopologyMismatchError` -- loud and correct. Without
+`resume` (a plain `journal=` run), old records for a different fingerprint are
+simply ignored and a new topology is appended to the *same file*; this now emits a
+`UserWarning` (Sonata adds no logging dependency) but the run itself proceeds and
+does not fail. Start a fresh journal file after upgrading if you don't want mixed
+topologies accumulating in one file.
 
 Runtime values (including `TaskOutcome.value` and acquired resource values) are
 in-process only: they are not journaled and are not reconstructed by resume. Make

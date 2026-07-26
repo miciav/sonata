@@ -39,6 +39,16 @@ class WorkflowTopologyMismatchError(Exception):
     """Raised when a journal belongs to a different compiled workflow topology."""
 
 
+class MissingAcquireUnitError(Exception):
+    """Raised when a compiled task names a resource with no acquire unit.
+
+    A well-formed `CompiledWorkflow` produced by `Workflow.compile()` never
+    triggers this: every resource in `required_resources` has a matching
+    acquire unit. `CompiledWorkflow`/`CompiledTask` are public exports, though,
+    so a hand-built or hand-edited one can violate that invariant.
+    """
+
+
 class CorruptJournalError(Exception):
     """Raised when a journal contains a malformed complete record."""
 

@@ -9,6 +9,7 @@ from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
+from sonata_engine.errors import MissingAcquireUnitError
 
 
 class _NoopTask(Task[None]):
@@ -120,3 +121,17 @@ def test_resource_dependency_edges_change_workflow_fingerprint() -> None:
     )
 
     assert first.fingerprint != second.fingerprint
+
+
+def test_fingerprint_raises_typed_error_for_resource_with_no_acquire_unit() -> None:
+    """`CompiledWorkflow`/`CompiledTask` are public exports: a hand-built one that
+    names a resource with no matching acquire unit must fail with a readable,
+    typed error instead of a bare `KeyError`."""
+    orphan = Resource(
+        title="Acquire orphan", acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+    )
+    task = CompiledTask(task_id="001.use", task=_NoopTask("Use"), required_resources=(orphan,))
+    compiled = CompiledWorkflow(workflow_id="wf", tasks=(task,))
+
+    with pytest.raises(MissingAcquireUnitError, match="Acquire orphan"):
+        compiled.fingerprint

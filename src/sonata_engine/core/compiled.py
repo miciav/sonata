@@ -8,6 +8,7 @@ from typing import Any, Generic, Literal, TypeVar
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
+from sonata_engine.errors import MissingAcquireUnitError
 
 T = TypeVar("T")
 
@@ -49,13 +50,23 @@ class CompiledWorkflow:
             for task in self.tasks
             if task.kind == "acquire" and task.resource is not None
         }
+
+        def _acquire_id(resource: Resource[Any]) -> str:
+            try:
+                return acquire_ids[id(resource)]
+            except KeyError as exc:
+                raise MissingAcquireUnitError(
+                    f"required_resources names {resource.title!r}, which has no "
+                    "acquire unit in this compiled workflow"
+                ) from exc
+
         topology = [
             (
                 task.task_id,
                 task.kind,
                 f"{type(task.task).__module__}.{type(task.task).__qualname__}",
                 task.task.reuse_key if isinstance(task.task, ReusableTask) else None,
-                tuple(acquire_ids[id(resource)] for resource in task.required_resources),
+                tuple(_acquire_id(resource) for resource in task.required_resources),
             )
             for task in self.tasks
         ]

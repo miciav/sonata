@@ -16,6 +16,8 @@ SRC_ROOT = REPO_ROOT / "src" / "sonata_engine"
 FORBIDDEN = {
     "controlplane_tool",
     "nanofaas",
+    "nanolab",
+    "sonata_tasks",
     "workflow_tasks",
     "azure_vm_sdk",
     "multipass_sdk",

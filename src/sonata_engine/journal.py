@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import uuid
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -204,6 +205,7 @@ class Journal:
             return states
         lines = self.path.read_bytes().splitlines(keepends=True)
         offset = 0
+        warned_mismatch = False
         for index, raw_line in enumerate(lines):
             line_start = offset
             offset += len(raw_line)
@@ -245,6 +247,16 @@ class Journal:
                     raise WorkflowTopologyMismatchError(
                         f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
                         f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
+                    )
+                if not warned_mismatch:
+                    warned_mismatch = True
+                    warnings.warn(
+                        f"{self.path}: existing journal records for workflow "
+                        f"{self.workflow_id!r} have fingerprint {fingerprint!r}, expected "
+                        f"{self.workflow_fingerprint!r}; ignoring them and appending a new "
+                        "topology to the same file (a Sonata upgrade invalidates prior "
+                        "journals -- see README.md)",
+                        stacklevel=2,
                     )
                 continue
             try:
