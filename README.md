@@ -62,6 +62,22 @@ workflow.add(Build(), requires=(builder,))
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.
 
+## Selecting a slice
+
+`Selection` narrows a run to some of its consumer tasks, addressed by title slug.
+
+```python
+from sonata_engine import Selection
+
+workflow.run(select=Selection(only="build-image"))
+workflow.run(select=Selection(start="build-image", until="publish-manifest"))
+```
+
+Resources are not selectable: the compiler re-splices acquire and release around
+whichever consumers survive, so a slice keeps its cleanup. Ordinals renumber over
+the survivors, which makes a sliced run a different topology — `resume` across one
+fails closed.
+
 ## Journal and resume
 
 ```python

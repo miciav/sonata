@@ -65,10 +65,16 @@ class Workflow:
         journal: JournalConfig | None = None,
         resume: bool = False,
         verifiers: Mapping[str, Verifier] | None = None,
+        select: Selection | None = None,
     ) -> WorkflowResult:
-        """Compile and run this workflow using compiler-owned task identities."""
+        """Compile and run this workflow using compiler-owned task identities.
+
+        `select` narrows the run to a slice of consumer tasks; their resources
+        are still acquired and released around them. A sliced run has a
+        different fingerprint, so `resume` across one fails closed.
+        """
         return self._run_compiled(
-            self.compile(),
+            self.compile(select=select),
             journal=journal,
             resume=resume,
             verifiers=verifiers,
