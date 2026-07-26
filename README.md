@@ -48,7 +48,15 @@ their consumers and cleanup runs in reverse acquisition order after success or
 failure.
 
 ```python
-from sonata_engine import Resource
+from sonata_engine import Resource, TaskInputs
+
+
+def start_builder(inputs: TaskInputs) -> Builder:
+    return Builder()
+
+
+def stop_builder(inputs: TaskInputs, builder: Builder) -> None:
+    builder.stop()
 
 builder = Resource(
     title="Acquire builder",

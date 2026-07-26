@@ -187,23 +187,30 @@ def test_releases_run_in_reverse_acquisition_order() -> None:
 
 
 def test_resource_value_is_visible_only_to_declared_consumers_and_release() -> None:
-    calls: list[object] = []
+    value = {"url": "postgres://db"}
+    calls: list[str] = []
+
+    def release_database(_inputs: TaskInputs, released: dict[str, str]) -> None:
+        assert released is value
+        calls.append("release")
+
     database = Resource[dict[str, str]](
         title="Acquire database",
-        acquire=lambda _inputs: {"url": "postgres://db"},
-        release=lambda _inputs, value: calls.append(value),
+        acquire=lambda _inputs: value,
+        release=release_database,
     )
 
     class _ReadDatabase(Task[None]):
         title = "Read database"
 
         def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
-            calls.append(inputs.resource(database))
+            assert inputs.resource(database) is value
+            calls.append("consumer")
             return TaskOutcome()
 
     Workflow(workflow_id="wf").add(_ReadDatabase(), requires=(database,)).run()
 
-    assert calls == [{"url": "postgres://db"}, {"url": "postgres://db"}]
+    assert calls == ["consumer", "release"]
 
 
 def test_consumer_cannot_read_undeclared_resource() -> None:

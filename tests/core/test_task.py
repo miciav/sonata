@@ -12,7 +12,7 @@ from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import Evidence, TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
-from sonata_engine.errors import UndeclaredResourceError
+from sonata_engine.errors import ResourceUnavailableError, UndeclaredResourceError
 
 
 class ValidTask(Task[int]):
@@ -96,6 +96,19 @@ def test_task_inputs_only_exposes_declared_resource_values() -> None:
 
     assert inputs.resource(database) == "postgres://db"
     with pytest.raises(UndeclaredResourceError):
+        inputs.resource(cache)
+
+
+def test_task_inputs_rejects_a_declared_but_unavailable_resource() -> None:
+    cache = Resource[None](
+        title="Acquire cache",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+    )
+
+    inputs = TaskInputs._for_resources({}, {cache})
+
+    with pytest.raises(ResourceUnavailableError):
         inputs.resource(cache)
 
 
