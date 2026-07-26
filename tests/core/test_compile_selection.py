@@ -65,6 +65,39 @@ def test_only_keeps_one_consumer_and_its_resource_lifecycle() -> None:
     ]
 
 
+def test_only_retains_transitive_resource_lifecycle() -> None:
+    vm = _resource()
+    helm = Resource(
+        title="Acquire helm",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+        requires=(vm,),
+    )
+    function = Resource(
+        title="Acquire function",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+        requires=(helm,),
+    )
+    workflow = Workflow(workflow_id="demo")
+    workflow.add(_Noop("List"))
+    workflow.add(_Noop("Invoke"), requires=(function,))
+
+    compiled = workflow.compile(select=Selection(only="invoke"))
+
+    assert [task.task.title for task in compiled.tasks] == [
+        "Acquire vm",
+        "Acquire helm",
+        "Acquire function",
+        "Invoke",
+        "Release function",
+        "Release helm",
+        "Release vm",
+    ]
+    assert compiled.tasks[3].required_resources == (function,)
+    assert compiled.tasks[2].required_resources == (helm,)
+
+
 def test_only_on_a_task_without_resources_drops_the_lifecycle() -> None:
     workflow, _resource_ = _workflow_with_resource()
 

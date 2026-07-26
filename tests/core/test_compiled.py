@@ -7,6 +7,7 @@ import pytest
 from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
+from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
 
 
@@ -69,6 +70,53 @@ def test_reusable_task_configuration_changes_workflow_fingerprint() -> None:
     second = CompiledWorkflow(
         workflow_id="wf",
         tasks=(CompiledTask(task_id="001.build", task=_ReusableNoop("source=new")),),
+    )
+
+    assert first.fingerprint != second.fingerprint
+
+
+def test_resource_dependency_edges_change_workflow_fingerprint() -> None:
+    vm = Resource(
+        title="Acquire vm", acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+    )
+    helm = Resource(
+        title="Acquire helm",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+        requires=(vm,),
+    )
+    task = _NoopTask("Deploy")
+    first = CompiledWorkflow(
+        workflow_id="wf",
+        tasks=(
+            CompiledTask(
+                task_id="001.acquire-vm", task=_NoopTask("Acquire vm"), resource=vm, kind="acquire"
+            ),
+            CompiledTask(
+                task_id="002.acquire-helm",
+                task=_NoopTask("Acquire helm"),
+                resource=helm,
+                kind="acquire",
+                required_resources=(vm,),
+            ),
+            CompiledTask(task_id="003.deploy", task=task, required_resources=(helm,)),
+        ),
+    )
+    second = CompiledWorkflow(
+        workflow_id="wf",
+        tasks=(
+            CompiledTask(
+                task_id="001.acquire-vm", task=_NoopTask("Acquire vm"), resource=vm, kind="acquire"
+            ),
+            CompiledTask(
+                task_id="002.acquire-helm",
+                task=_NoopTask("Acquire helm"),
+                resource=helm,
+                kind="acquire",
+                required_resources=(vm,),
+            ),
+            CompiledTask(task_id="003.deploy", task=task, required_resources=(vm,)),
+        ),
     )
 
     assert first.fingerprint != second.fingerprint

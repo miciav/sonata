@@ -13,6 +13,10 @@ class ResourceUnavailableError(Exception):
     """Raised when a declared resource has not been acquired."""
 
 
+class ResourceDependencyCycleError(Exception):
+    """Raised when resource lifecycle dependencies contain a cycle."""
+
+
 class ResumeConfigurationError(Exception):
     """Raised when `resume=True` is requested without a `JournalConfig`."""
 

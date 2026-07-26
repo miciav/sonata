@@ -19,6 +19,7 @@ from sonata_engine.core.selection import Selection
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import (
     InvalidTaskOutcomeError,
+    ResourceDependencyCycleError,
     ResumeConfigurationError,
     SelectionError,
 )
@@ -125,11 +126,10 @@ class Workflow:
         """
         if resume and journal is None:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
-        jrnl = (
-            Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
-        )
+        jrnl = Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
 
         release_for = {ct.resource: ct for ct in compiled.tasks if ct.kind == "release"}
+        retained_resources = self._retained_resources(compiled)
         # Release units for acquired-but-not-yet-released resources, in acquisition order.
         pending: list[CompiledTask[object]] = []
         release_errors: list[BaseException] = []
@@ -139,7 +139,9 @@ class Workflow:
 
         for compiled_task in compiled.tasks:
             if compiled_task.kind == "release":
-                execution = self._release(compiled_task, release_errors, state, jrnl)
+                execution = self._release(
+                    compiled_task, release_errors, state, jrnl, retained_resources
+                )
                 if execution is not None:
                     executions.append(execution)
                 pending = [p for p in pending if p is not compiled_task]
@@ -164,7 +166,7 @@ class Workflow:
 
         if main_error is not None:
             for compiled_task in reversed(pending):
-                self._release(compiled_task, release_errors, state, jrnl)
+                self._release(compiled_task, release_errors, state, jrnl, retained_resources)
 
         critical_error = (
             main_error
@@ -195,6 +197,28 @@ class Workflow:
                 "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
             )
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
+
+    def _retained_resources(self, compiled: CompiledWorkflow) -> frozenset[Resource[Any]]:
+        """Infrastructure resources and the dependencies that keep them usable."""
+        if not self.keep_infrastructure:
+            return frozenset()
+        retained: set[Resource[Any]] = set()
+
+        def retain(resource: Resource[Any]) -> None:
+            if resource in retained:
+                return
+            retained.add(resource)
+            for dependency in resource.requires:
+                retain(dependency)
+
+        for task in compiled.tasks:
+            if (
+                task.kind == "acquire"
+                and task.resource is not None
+                and task.resource.infrastructure
+            ):
+                retain(task.resource)
+        return frozenset(retained)
 
     def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
         return jrnl.next_attempt(task_id) if jrnl is not None else 0
@@ -281,6 +305,7 @@ class Workflow:
         release_errors: list[BaseException],
         state: _RunState,
         jrnl: Journal | None = None,
+        retained_resources: frozenset[Resource[Any]] = frozenset(),
     ) -> TaskExecution | None:
         """Run one release unit, honoring infrastructure retention, collecting errors.
 
@@ -288,7 +313,7 @@ class Workflow:
         state, but its outcome is still recorded when a journal is configured.
         """
         resource = compiled_task.resource
-        if self.keep_infrastructure and resource is not None and resource.infrastructure:
+        if resource in retained_resources:
             if jrnl is not None:
                 self._record_release_outcome(
                     release_errors,
@@ -316,9 +341,7 @@ class Workflow:
             with _task_lifecycle(task_id=task_id, title=compiled_task.task.title):
                 if resource is None:
                     raise RuntimeError("release task has no resource")
-                outcome = compiled_task.task.run(
-                    state.inputs_for((resource, *resource.requires))
-                )
+                outcome = compiled_task.task.run(state.inputs_for((resource, *resource.requires)))
                 if not isinstance(outcome, TaskOutcome):
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
@@ -376,9 +399,7 @@ class Workflow:
         )
         return CompiledWorkflow(workflow_id=self.workflow_id, tasks=compiled_tasks)
 
-    def _select(
-        self, select: Selection | None
-    ) -> list[tuple[Task[Any], tuple[Resource, ...]]]:
+    def _select(self, select: Selection | None) -> list[tuple[Task[Any], tuple[Resource, ...]]]:
         """Filter consumer definitions by title slug, leaving resources to the compiler."""
         slugs = [_slugify(task.title) for task, _requires in self._definitions]
         for slug, (task, _requires) in zip(slugs, self._definitions):
@@ -395,63 +416,100 @@ class Workflow:
             else len(self._definitions) - 1
         )
         if first > last:
-            raise SelectionError(
-                f"start {select.start!r} comes after until {select.until!r}"
-            )
+            raise SelectionError(f"start {select.start!r} comes after until {select.until!r}")
         return list(self._definitions[first : last + 1])
 
     def _merge_resources(
         self, definitions: list[tuple[Task[Any], tuple[Resource, ...]]]
     ) -> list[CompiledTask[Any]]:
         """Splice acquire/release units around consumers (IDs assigned by caller)."""
-        # First/last consumer index per resource, in discovery order.
-        first: dict[Resource, int] = {}
-        last: dict[Resource, int] = {}
+        # First/last consumer index per resource, in DFS declaration order.
+        # Keys deliberately use object identity: resource callbacks and a malformed
+        # cyclic graph must never be hashed while the compiler is diagnosing it.
+        first: dict[int, int] = {}
+        last: dict[int, int] = {}
+        resources: dict[int, Resource[Any]] = {}
+        discovery: list[int] = []
+        colors: dict[int, str] = {}
+        stack: list[Resource[Any]] = []
+
         def register(resource: Resource[Any], index: int) -> None:
-            for dependency in resource.requires:
-                register(dependency, index)
-            first.setdefault(resource, index)
-            last[resource] = index
+            key = id(resource)
+            color = colors.get(key, "unseen")
+            if color == "visiting":
+                cycle_start = next(i for i, item in enumerate(stack) if item is resource)
+                cycle = (*stack[cycle_start:], resource)
+                raise ResourceDependencyCycleError(
+                    "resource dependency cycle: " + " -> ".join(item.title for item in cycle)
+                )
+            if color == "unseen":
+                colors[key] = "visiting"
+                stack.append(resource)
+                for dependency in resource.requires:
+                    register(dependency, index)
+                stack.pop()
+                colors[key] = "done"
+                resources[key] = resource
+                discovery.append(key)
+            else:
+                for dependency in resource.requires:
+                    register(dependency, index)
+            first.setdefault(key, index)
+            last[key] = index
 
         for index, (_task, requires) in enumerate(definitions):
             for resource in requires:
                 register(resource, index)
 
         # Acquisition order: by first-consumer index, then discovery order.
-        acquire_rank = {
-            resource: rank
-            for rank, resource in enumerate(sorted(first, key=lambda r: first[r]))
-        }
-        acquires_before: dict[int, list[Resource]] = {}
-        releases_after: dict[int, list[Resource]] = {}
-        for resource in first:
-            acquires_before.setdefault(first[resource], []).append(resource)
-        for resource in last:
-            releases_after.setdefault(last[resource], []).append(resource)
+        acquire_rank = {key: rank for rank, key in enumerate(discovery)}
+        acquires_before: dict[int, list[int]] = {}
+        releases_after: dict[int, list[int]] = {}
+        for key in discovery:
+            acquires_before.setdefault(first[key], []).append(key)
+            releases_after.setdefault(last[key], []).append(key)
         # Same-point acquires keep acquisition order; same-point releases reverse it.
         for group in acquires_before.values():
-            group.sort(key=lambda r: acquire_rank[r])
+            group.sort(key=lambda key: acquire_rank[key])
         for group in releases_after.values():
-            group.sort(key=lambda r: acquire_rank[r], reverse=True)
+            group.sort(key=lambda key: acquire_rank[key], reverse=True)
 
         merged: list[CompiledTask[Any]] = []
         for index, (task, requires) in enumerate(definitions):
-            for resource in acquires_before.get(index, ()):
+            for key in acquires_before.get(index, ()):
+                resource = resources[key]
                 op = ResourceOp(
                     title=resource.title,
                     resource=resource,
                     operation=ResourceOperation.ACQUIRE,
                     idempotent=resource.acquire_idempotent,
                 )
-                merged.append(CompiledTask(task_id="", task=op, kind="acquire", resource=resource))
+                merged.append(
+                    CompiledTask(
+                        task_id="",
+                        task=op,
+                        required_resources=resource.requires,
+                        kind="acquire",
+                        resource=resource,
+                    )
+                )
             merged.append(
                 CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")
             )
-            for resource in releases_after.get(index, ()):
+            for key in releases_after.get(index, ()):
+                resource = resources[key]
                 op = ResourceOp(
                     title=resource.release_title,
                     resource=resource,
                     operation=ResourceOperation.RELEASE,
                 )
-                merged.append(CompiledTask(task_id="", task=op, kind="release", resource=resource))
+                merged.append(
+                    CompiledTask(
+                        task_id="",
+                        task=op,
+                        required_resources=resource.requires,
+                        kind="release",
+                        resource=resource,
+                    )
+                )
         return merged

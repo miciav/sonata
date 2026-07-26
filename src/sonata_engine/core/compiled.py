@@ -44,12 +44,18 @@ class CompiledWorkflow:
     @property
     def fingerprint(self) -> str:
         """Deterministic identity of topology and reusable-task semantics."""
+        acquire_ids = {
+            id(task.resource): task.task_id
+            for task in self.tasks
+            if task.kind == "acquire" and task.resource is not None
+        }
         topology = [
             (
                 task.task_id,
                 task.kind,
                 f"{type(task.task).__module__}.{type(task.task).__qualname__}",
                 task.task.reuse_key if isinstance(task.task, ReusableTask) else None,
+                tuple(acquire_ids[id(resource)] for resource in task.required_resources),
             )
             for task in self.tasks
         ]
