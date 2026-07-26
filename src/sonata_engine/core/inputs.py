@@ -20,9 +20,13 @@ class TaskInputs:
     _values: Mapping[int, object]
     _accessible: Set[int]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_values", MappingProxyType(dict(self._values)))
+        object.__setattr__(self, "_accessible", frozenset(self._accessible))
+
     @classmethod
     def empty(cls) -> TaskInputs:
-        return cls(MappingProxyType({}), frozenset())
+        return cls({}, frozenset())
 
     @classmethod
     def _for_resources(
@@ -36,7 +40,7 @@ class TaskInputs:
     def _for_resource_values(
         cls, values: Mapping[int, object], accessible: Iterable[Resource[Any]]
     ) -> TaskInputs:
-        return cls(MappingProxyType(dict(values)), frozenset(map(id, accessible)))
+        return cls(values, frozenset(map(id, accessible)))
 
     def resource(self, resource: Resource[T]) -> T:
         resource_id = id(resource)

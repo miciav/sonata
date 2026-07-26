@@ -59,6 +59,7 @@ def test_root_exports_the_v2_contract() -> None:
     expected = {
         "CorruptJournalError",
         "Resource",
+        "ResourceDependencyCycleError",
         "TaskExecution",
         "TaskInputs",
         "TaskOutcome",
@@ -68,3 +69,8 @@ def test_root_exports_the_v2_contract() -> None:
     }
 
     assert expected <= set(sonata_engine.__all__)
+
+
+def test_engine_owned_resource_operations_are_not_public() -> None:
+    assert "ResourceOp" not in sonata_engine.__all__
+    assert "ResourceOperation" not in sonata_engine.__all__

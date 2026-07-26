@@ -274,6 +274,50 @@ def test_resource_dependency_cycle_reports_the_cycle_path() -> None:
         workflow.compile()
 
 
+def test_direct_resource_dependency_cycle_reports_the_cycle_path() -> None:
+    resource = _resource("loop", [])
+    object.__setattr__(resource, "requires", (resource,))
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", []), requires=(resource,))
+
+    with pytest.raises(
+        ResourceDependencyCycleError,
+        match="Acquire loop.*Acquire loop",
+    ):
+        workflow.compile()
+
+
+def test_shared_dependency_is_acquired_once_and_siblings_keep_declaration_order() -> None:
+    calls: list[str] = []
+    vm = _resource("vm", calls)
+    first = Resource(
+        title="Acquire first",
+        acquire=lambda inputs: calls.append(f"acquire.first:{inputs.resource(vm)}"),
+        release=lambda _inputs, _value: calls.append("release.first"),
+        requires=(vm,),
+    )
+    second = Resource(
+        title="Acquire second",
+        acquire=lambda inputs: calls.append(f"acquire.second:{inputs.resource(vm)}"),
+        release=lambda _inputs, _value: calls.append("release.second"),
+        requires=(vm,),
+    )
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls), requires=(first, second))
+
+    workflow.run()
+
+    assert calls == [
+        "acquire.vm",
+        "acquire.first:None",
+        "acquire.second:None",
+        "Use",
+        "release.second",
+        "release.first",
+        "release.vm",
+    ]
+
+
 def test_resource_value_is_visible_only_to_declared_consumers_and_release() -> None:
     value = {"url": "postgres://db"}
     calls: list[str] = []
@@ -424,6 +468,25 @@ def test_keep_infrastructure_retains_its_transitive_dependencies() -> None:
     workflow.run()
 
     assert calls == ["acquire.vm", "acquire.helm", "Use"]
+
+
+def test_keep_infrastructure_retains_transitive_dependencies_after_failure() -> None:
+    calls: list[str] = []
+    vm = _resource("vm", calls)
+    helm = Resource(
+        title="Acquire helm",
+        acquire=lambda _inputs: calls.append("acquire.helm"),
+        release=lambda _inputs, _value: calls.append("release.helm"),
+        requires=(vm,),
+        infrastructure=True,
+    )
+    workflow = _workflow(keep_infrastructure=True)
+    workflow.add(_RecordTask("Boom", calls, fail=True), requires=(helm,))
+
+    with pytest.raises(RuntimeError, match="Boom failed"):
+        workflow.run()
+
+    assert calls == ["acquire.vm", "acquire.helm", "Boom"]
 
 
 def test_keep_infrastructure_still_releases_safety_after_failure() -> None:

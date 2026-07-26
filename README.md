@@ -75,6 +75,11 @@ Within `Build.run`, retrieve the declared value with `inputs.resource(builder)`.
 Resources may themselves declare `requires=(other_resource,)`; those dependencies
 are acquired first, remain available to their lifecycle callbacks, and are released
 after their dependents. A consumer declares only the resources it uses directly.
+Dependency cycles fail compilation with `ResourceDependencyCycleError`.
+
+With `Workflow(keep_infrastructure=True)`, every `infrastructure=True` resource and
+all of its transitive dependencies are retained. This prevents the engine from
+keeping a deployment while releasing the VM or cluster it still depends on.
 
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.

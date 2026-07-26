@@ -112,6 +112,33 @@ def test_task_inputs_rejects_a_declared_but_unavailable_resource() -> None:
         inputs.resource(cache)
 
 
+def test_task_inputs_constructor_snapshots_mutable_arguments() -> None:
+    database = Resource[str](
+        title="Acquire database",
+        acquire=lambda _inputs: "postgres://db",
+        release=lambda _inputs, _value: None,
+    )
+    values: dict[int, object] = {id(database): "postgres://original"}
+    accessible = {id(database)}
+    inputs = TaskInputs(values, accessible)
+
+    values[id(database)] = "postgres://mutated"
+    accessible.clear()
+
+    assert inputs.resource(database) == "postgres://original"
+
+
+def test_task_inputs_resource_preserves_its_static_type() -> None:
+    fixture = Path(__file__).parent.parent / "typecheck" / "resource_contracts.py"
+    result = subprocess.run(
+        [sys.executable, "-m", "basedpyright", str(fixture)],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout
+
+
 def test_invalid_run_override_fails_static_type_check() -> None:
     """The negative fixture (InvalidTask.run returning None) must fail
     basedpyright. Run as a subprocess so the normal type-check suite

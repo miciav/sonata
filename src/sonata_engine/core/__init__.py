@@ -6,7 +6,7 @@ from sonata_engine.core.compiled import (
 )
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import Evidence, TaskOutcome
-from sonata_engine.core.resource_task import Resource, ResourceOp, ResourceOperation
+from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.selection import Selection
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
@@ -17,8 +17,6 @@ __all__ = [
     "Evidence",
     "TaskInputs",
     "Resource",
-    "ResourceOp",
-    "ResourceOperation",
     "ReusableTask",
     "Selection",
     "Task",
