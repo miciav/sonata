@@ -186,6 +186,32 @@ def test_releases_run_in_reverse_acquisition_order() -> None:
     ]
 
 
+def test_structurally_equal_resources_keep_distinct_runtime_values_and_releases() -> None:
+    acquired = iter(("first", "second"))
+    released: list[str] = []
+
+    def acquire(_inputs: TaskInputs) -> str:
+        return next(acquired)
+
+    def release(_inputs: TaskInputs, value: str) -> None:
+        released.append(value)
+
+    first = Resource(title="Acquire service", acquire=acquire, release=release)
+    second = Resource(title="Acquire service", acquire=acquire, release=release)
+
+    class _UseServices(Task[None]):
+        title = "Use services"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            assert inputs.resource(first) == "first"
+            assert inputs.resource(second) == "second"
+            return TaskOutcome()
+
+    Workflow(workflow_id="wf").add(_UseServices(), requires=(first, second)).run()
+
+    assert released == ["second", "first"]
+
+
 def test_resource_dependencies_acquire_and_release_in_dependency_order() -> None:
     calls: list[str] = []
     vm = _resource("vm", calls)

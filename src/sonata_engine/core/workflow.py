@@ -33,17 +33,17 @@ _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 class _RunState:
     """Runner-private mutable resource values for one workflow execution."""
 
-    values: dict[Resource[Any], object] = field(default_factory=dict)
+    values: dict[int, object] = field(default_factory=dict)
     _missing: object = field(default_factory=object, init=False, repr=False)
 
     def inputs_for(self, accessible: tuple[Resource[Any], ...]) -> TaskInputs:
-        return TaskInputs._for_resources(self.values, frozenset(accessible))
+        return TaskInputs._for_resource_values(self.values, accessible)
 
     def publish(self, resource: Resource[Any], value: object) -> None:
-        self.values[resource] = value
+        self.values[id(resource)] = value
 
     def remove(self, resource: Resource[Any]) -> object:
-        return self.values.pop(resource, self._missing)
+        return self.values.pop(id(resource), self._missing)
 
 
 def _slugify(title: str) -> str:
@@ -128,7 +128,11 @@ class Workflow:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
         jrnl = Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
 
-        release_for = {ct.resource: ct for ct in compiled.tasks if ct.kind == "release"}
+        release_for = {
+            id(task.resource): task
+            for task in compiled.tasks
+            if task.kind == "release" and task.resource is not None
+        }
         retained_resources = self._retained_resources(compiled)
         # Release units for acquired-but-not-yet-released resources, in acquisition order.
         pending: list[CompiledTask[object]] = []
@@ -149,7 +153,10 @@ class Workflow:
             try:
                 on_executed = None
                 if compiled_task.kind == "acquire":
-                    release_task = release_for[compiled_task.resource]
+                    resource = compiled_task.resource
+                    if resource is None:
+                        raise RuntimeError("acquire task has no resource")
+                    release_task = release_for[id(resource)]
                     on_executed = partial(pending.append, release_task)
                 executions.append(
                     self._run_unit(
@@ -198,16 +205,17 @@ class Workflow:
             )
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
-    def _retained_resources(self, compiled: CompiledWorkflow) -> frozenset[Resource[Any]]:
+    def _retained_resources(self, compiled: CompiledWorkflow) -> frozenset[int]:
         """Infrastructure resources and the dependencies that keep them usable."""
         if not self.keep_infrastructure:
             return frozenset()
-        retained: set[Resource[Any]] = set()
+        retained: set[int] = set()
 
         def retain(resource: Resource[Any]) -> None:
-            if resource in retained:
+            resource_id = id(resource)
+            if resource_id in retained:
                 return
-            retained.add(resource)
+            retained.add(resource_id)
             for dependency in resource.requires:
                 retain(dependency)
 
@@ -305,7 +313,7 @@ class Workflow:
         release_errors: list[BaseException],
         state: _RunState,
         jrnl: Journal | None = None,
-        retained_resources: frozenset[Resource[Any]] = frozenset(),
+        retained_resources: frozenset[int] = frozenset(),
     ) -> TaskExecution | None:
         """Run one release unit, honoring infrastructure retention, collecting errors.
 
@@ -313,7 +321,7 @@ class Workflow:
         state, but its outcome is still recorded when a journal is configured.
         """
         resource = compiled_task.resource
-        if resource in retained_resources:
+        if resource is not None and id(resource) in retained_resources:
             if jrnl is not None:
                 self._record_release_outcome(
                     release_errors,

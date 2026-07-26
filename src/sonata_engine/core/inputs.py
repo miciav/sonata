@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Set
+from collections.abc import Iterable, Mapping, Set
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -17,8 +17,8 @@ T = TypeVar("T")
 class TaskInputs:
     """The resource values a task is permitted to observe during one run."""
 
-    _values: Mapping[Resource[Any], object]
-    _accessible: Set[Resource[Any]]
+    _values: Mapping[int, object]
+    _accessible: Set[int]
 
     @classmethod
     def empty(cls) -> TaskInputs:
@@ -28,13 +28,22 @@ class TaskInputs:
     def _for_resources(
         cls, values: Mapping[Resource[Any], object], accessible: Set[Resource[Any]]
     ) -> TaskInputs:
-        return cls(MappingProxyType(dict(values)), frozenset(accessible))
+        return cls._for_resource_values(
+            {id(resource): value for resource, value in values.items()}, accessible
+        )
+
+    @classmethod
+    def _for_resource_values(
+        cls, values: Mapping[int, object], accessible: Iterable[Resource[Any]]
+    ) -> TaskInputs:
+        return cls(MappingProxyType(dict(values)), frozenset(map(id, accessible)))
 
     def resource(self, resource: Resource[T]) -> T:
-        if resource not in self._accessible:
+        resource_id = id(resource)
+        if resource_id not in self._accessible:
             raise UndeclaredResourceError(f"resource {resource.title!r} is not declared")
         try:
-            value = self._values[resource]  # type: ignore[index]
+            value = self._values[resource_id]
         except KeyError as exc:
             raise ResourceUnavailableError(f"resource {resource.title!r} is unavailable") from exc
         return cast(T, value)
