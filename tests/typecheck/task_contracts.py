@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import override
 
-from sonata_engine.core.inputs import TaskInputs
+from sonata_engine import Resource, TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import ReusableTask, Task
 
@@ -41,3 +41,18 @@ class MissingReuseKey(ReusableTask):
 
 
 MissingReuseKey()
+
+
+def acquire_name(_inputs: TaskInputs) -> str:
+    return "builder"
+
+
+def release_name(_inputs: TaskInputs, name: str) -> None:
+    assert name == "builder"
+
+
+builder: Resource[str] = Resource(
+    title="Acquire builder",
+    acquire=acquire_name,
+    release=release_name,
+)

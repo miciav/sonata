@@ -58,7 +58,9 @@ def test_no_runtime_dependencies() -> None:
 def test_root_exports_the_v2_contract() -> None:
     expected = {
         "CorruptJournalError",
+        "Resource",
         "TaskExecution",
+        "TaskInputs",
         "TaskOutcome",
         "Workflow",
         "WorkflowResult",

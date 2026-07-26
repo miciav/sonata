@@ -16,13 +16,13 @@ compilation assigns one deterministic ordinal/slug ID and the engine uses it for
 results, journal records, and events.
 
 ```python
-from sonata_engine import Task, TaskOutcome, Workflow
+from sonata_engine import Task, TaskInputs, TaskOutcome, Workflow
 
 
 class Build(Task[str]):
     title = "Build image"
 
-    def run(self) -> TaskOutcome[str]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
         return TaskOutcome(value="registry.example/image:v1")
 
 
@@ -35,7 +35,10 @@ assert result.by_id("001.build-image").outcome == TaskOutcome(
 )
 ```
 
-Every concrete task subclasses `Task[T]` and returns `TaskOutcome[T]`. A
+Every concrete task subclasses `Task[T]` and returns `TaskOutcome[T]`. `TaskInputs`
+is the task's capability-limited access to declared resource values. It is distinct
+from `WorkflowContext`, which carries flow and task identifiers for reporting and
+event correlation; a task receives `TaskInputs`, not `WorkflowContext`. A
 `ReusableTask` may be skipped only when it returned non-empty evidence and every
 evidence item has a successful verifier. It must also expose a deterministic
 `reuse_key` that changes whenever semantic inputs change; this key participates in
@@ -43,9 +46,10 @@ the workflow fingerprint. Reusable tasks cannot return a runtime value.
 
 ## Resources
 
-Pass resources through `requires`. The compiler inserts acquire/release units around
-their consumers and cleanup runs in reverse acquisition order after success or
-failure.
+Pass resources through `requires`. A `Resource[T]` acquires a runtime value of type
+`T` and receives that same typed value when it is released. The compiler inserts
+acquire/release units around consumers, and cleanup runs in reverse acquisition
+order after success or failure.
 
 ```python
 from sonata_engine import Resource, TaskInputs
@@ -58,7 +62,7 @@ def start_builder(inputs: TaskInputs) -> Builder:
 def stop_builder(inputs: TaskInputs, builder: Builder) -> None:
     builder.stop()
 
-builder = Resource(
+builder: Resource[Builder] = Resource(
     title="Acquire builder",
     acquire=start_builder,
     release=stop_builder,
@@ -66,6 +70,11 @@ builder = Resource(
 )
 workflow.add(Build(), requires=(builder,))
 ```
+
+Within `Build.run`, retrieve the declared value with `inputs.resource(builder)`.
+Resources may themselves declare `requires=(other_resource,)`; those dependencies
+are acquired first, remain available to their lifecycle callbacks, and are released
+after their dependents. A consumer declares only the resources it uses directly.
 
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.
@@ -82,7 +91,8 @@ workflow.run(select=Selection(start="build-image", until="publish-manifest"))
 ```
 
 Resources are not selectable: the compiler re-splices acquire and release around
-whichever consumers survive, so a slice keeps its cleanup. Ordinals renumber over
+whichever consumers survive, retaining every transitive resource dependency needed
+by those consumers, so a slice keeps its setup and cleanup. Ordinals renumber over
 the survivors, which makes a sliced run a different topology — `resume` across one
 fails closed.
 
@@ -104,6 +114,11 @@ Each task starts with attempt `0`, status `pending`; later attempts append lifec
 records. Every record carries a deterministic workflow fingerprint, and resume fails
 if the ordered task topology or task type changed. A torn final line is removed before
 continuing, while any complete malformed record raises `CorruptJournalError`.
+
+Runtime values (including `TaskOutcome.value` and acquired resource values) are
+in-process only: they are not journaled and are not reconstructed by resume. Make
+resumed work depend on durable, verifier-backed evidence rather than a prior runtime
+value.
 
 Sonata only includes the generic `file-digest` verifier. Domain evidence such as OCI
 artifacts must be verified by an injected downstream verifier.
