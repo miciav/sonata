@@ -5,6 +5,7 @@ from typing import Generator
 
 import pytest
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
@@ -19,14 +20,14 @@ class _NoopTask(Task[None]):
     def __init__(self, title: str) -> None:
         self.title = title
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
 
 
 class _ValueTask(Task[int]):
     title = "Produce value"
 
-    def run(self) -> TaskOutcome[int]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[int]:
         return TaskOutcome(value=42)
 
 
@@ -151,14 +152,14 @@ class _FailOnTaskFailedSink(_FakeSink):
 class _BoomTask(Task[None]):
     title = "Boom"
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         raise RuntimeError("boom")
 
 
 class _BadOutcomeTask(Task[None]):
     title = "Bad outcome"
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return "not-an-outcome"  # type: ignore[return-value]
 
 
@@ -166,7 +167,7 @@ class _BadReusableValue(ReusableTask):
     title = "Bad reusable value"
     reuse_key = "bad-reusable-value"
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome(value=42)  # type: ignore[arg-type]
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.selection import Selection
@@ -14,12 +15,12 @@ class _Noop(Task[None]):
     def __init__(self, title: str) -> None:
         self.title = title
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
 
 
 def _resource(title: str = "Acquire vm") -> Resource:
-    return Resource(title=title, acquire=lambda: None, release=lambda: None)
+    return Resource(title=title, acquire=lambda _inputs: None, release=lambda _inputs, _value: None)
 
 
 def _workflow_with_resource() -> tuple[Workflow, Resource]:

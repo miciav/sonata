@@ -10,6 +10,7 @@ from sonata_engine import (
     Selection,
     SelectionError,
     Task,
+    TaskInputs,
     TaskOutcome,
     Workflow,
     WorkflowTopologyMismatchError,
@@ -21,7 +22,7 @@ class _Recording(Task[None]):
         self.title = title
         self._log = log
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         self._log.append(self.title)
         return TaskOutcome()
 
@@ -29,8 +30,8 @@ class _Recording(Task[None]):
 def _workflow(log: list[str]) -> Workflow:
     resource = Resource(
         title="Acquire vm",
-        acquire=lambda: log.append("acquire"),
-        release=lambda: log.append("release"),
+        acquire=lambda _inputs: log.append("acquire"),
+        release=lambda _inputs, _value: log.append("release"),
     )
     workflow = Workflow(workflow_id="demo")
     workflow.add(_Recording("Build", log))
@@ -66,13 +67,13 @@ def test_run_releases_the_resource_when_a_selected_task_fails() -> None:
     class _Boom(Task[None]):
         title = "Invoke"
 
-        def run(self) -> TaskOutcome[None]:
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
             raise RuntimeError("boom")
 
     resource = Resource(
         title="Acquire vm",
-        acquire=lambda: log.append("acquire"),
-        release=lambda: log.append("release"),
+        acquire=lambda _inputs: log.append("acquire"),
+        release=lambda _inputs, _value: log.append("release"),
     )
     workflow = Workflow(workflow_id="demo")
     workflow.add(_Recording("Build", log))

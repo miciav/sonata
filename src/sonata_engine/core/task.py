@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar, override
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 
 T = TypeVar("T")
@@ -20,7 +21,7 @@ class Task(Generic[T], ABC):
     idempotent: bool = False
 
     @abstractmethod
-    def run(self) -> TaskOutcome[T]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[T]:
         raise NotImplementedError
 
 
@@ -41,5 +42,5 @@ class ReusableTask(Task[None], ABC):
 
     @override
     @abstractmethod
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         raise NotImplementedError

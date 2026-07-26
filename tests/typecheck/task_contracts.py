@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import override
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import ReusableTask, Task
 
@@ -17,7 +18,7 @@ class ValidTask(Task[int]):
     title = "Valid"
 
     @override
-    def run(self) -> TaskOutcome[int]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[int]:
         return TaskOutcome(value=42)
 
 
@@ -27,7 +28,7 @@ class InvalidTask(Task[int]):
     title = "Invalid"
 
     @override
-    def run(self) -> None:
+    def run(self, inputs: TaskInputs) -> None:
         return None
 
 
@@ -35,7 +36,7 @@ class MissingReuseKey(ReusableTask):
     title = "Missing reuse key"
 
     @override
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
 
 

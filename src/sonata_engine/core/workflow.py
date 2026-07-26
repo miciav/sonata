@@ -12,8 +12,9 @@ from sonata_engine.core.compiled import (
     TaskExecution,
     WorkflowResult,
 )
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
-from sonata_engine.core.resource_task import Resource, ResourceOp
+from sonata_engine.core.resource_task import Resource, ResourceOp, ResourceOperation
 from sonata_engine.core.selection import Selection
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import (
@@ -25,6 +26,23 @@ from sonata_engine.journal import Journal, JournalConfig, Verifier
 from sonata_engine.workflow.reporting import _task_lifecycle, _task_skipped
 
 _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass
+class _RunState:
+    """Runner-private mutable resource values for one workflow execution."""
+
+    values: dict[Resource[Any], object] = field(default_factory=dict)
+    _missing: object = field(default_factory=object, init=False, repr=False)
+
+    def inputs_for(self, accessible: tuple[Resource[Any], ...]) -> TaskInputs:
+        return TaskInputs._for_resources(self.values, frozenset(accessible))
+
+    def publish(self, resource: Resource[Any], value: object) -> None:
+        self.values[resource] = value
+
+    def remove(self, resource: Resource[Any]) -> object:
+        return self.values.pop(resource, self._missing)
 
 
 def _slugify(title: str) -> str:
@@ -117,10 +135,11 @@ class Workflow:
         release_errors: list[BaseException] = []
         main_error: BaseException | None = None
         executions: list[TaskExecution] = []
+        state = _RunState()
 
         for compiled_task in compiled.tasks:
             if compiled_task.kind == "release":
-                execution = self._release(compiled_task, release_errors, jrnl)
+                execution = self._release(compiled_task, release_errors, state, jrnl)
                 if execution is not None:
                     executions.append(execution)
                 pending = [p for p in pending if p is not compiled_task]
@@ -134,6 +153,7 @@ class Workflow:
                     self._run_unit(
                         compiled_task,
                         jrnl,
+                        state,
                         resume=resume,
                         on_executed=on_executed,
                     )
@@ -144,7 +164,7 @@ class Workflow:
 
         if main_error is not None:
             for compiled_task in reversed(pending):
-                self._release(compiled_task, release_errors, jrnl)
+                self._release(compiled_task, release_errors, state, jrnl)
 
         critical_error = (
             main_error
@@ -183,6 +203,7 @@ class Workflow:
         self,
         compiled_task: CompiledTask[object],
         jrnl: Journal | None,
+        state: _RunState,
         *,
         resume: bool,
         on_executed: Callable[[], None] | None = None,
@@ -212,9 +233,12 @@ class Workflow:
             jrnl.record_started(task_id, attempt)
         try:
             with _task_lifecycle(task_id=task_id, title=task.title):
-                outcome = task.run()
-                if on_executed is not None:
-                    on_executed()
+                inputs = state.inputs_for(
+                    compiled_task.resource.requires
+                    if compiled_task.kind == "acquire" and compiled_task.resource is not None
+                    else compiled_task.required_resources
+                )
+                outcome = task.run(inputs)
                 if not isinstance(outcome, TaskOutcome):
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
@@ -223,6 +247,10 @@ class Workflow:
                     raise InvalidTaskOutcomeError(
                         f"{task_id} is reusable and returned a runtime value"
                     )
+                if compiled_task.kind == "acquire" and compiled_task.resource is not None:
+                    state.publish(compiled_task.resource, outcome.value)
+                if on_executed is not None:
+                    on_executed()
         except BaseException as exc:
             if jrnl is not None:
                 try:
@@ -251,6 +279,7 @@ class Workflow:
         self,
         compiled_task: CompiledTask[object],
         release_errors: list[BaseException],
+        state: _RunState,
         jrnl: Journal | None = None,
     ) -> TaskExecution | None:
         """Run one release unit, honoring infrastructure retention, collecting errors.
@@ -275,6 +304,7 @@ class Workflow:
                 )
             except BaseException as exc:
                 release_errors.append(exc)
+            state.remove(resource)
             return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)
@@ -284,7 +314,11 @@ class Workflow:
             )
         try:
             with _task_lifecycle(task_id=task_id, title=compiled_task.task.title):
-                outcome = compiled_task.task.run()
+                if resource is None:
+                    raise RuntimeError("release task has no resource")
+                outcome = compiled_task.task.run(
+                    state.inputs_for((resource, *resource.requires))
+                )
                 if not isinstance(outcome, TaskOutcome):
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
@@ -301,6 +335,9 @@ class Workflow:
                     release_errors, lambda: jrnl.record_passed(task_id, attempt)
                 )
             return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
+        finally:
+            if resource is not None:
+                state.remove(resource)
         return None
 
     def add(self, task: Task[Any], requires: tuple[Resource, ...] = ()) -> Workflow:
@@ -370,10 +407,15 @@ class Workflow:
         # First/last consumer index per resource, in discovery order.
         first: dict[Resource, int] = {}
         last: dict[Resource, int] = {}
+        def register(resource: Resource[Any], index: int) -> None:
+            for dependency in resource.requires:
+                register(dependency, index)
+            first.setdefault(resource, index)
+            last[resource] = index
+
         for index, (_task, requires) in enumerate(definitions):
             for resource in requires:
-                first.setdefault(resource, index)
-                last[resource] = index
+                register(resource, index)
 
         # Acquisition order: by first-consumer index, then discovery order.
         acquire_rank = {
@@ -397,7 +439,8 @@ class Workflow:
             for resource in acquires_before.get(index, ()):
                 op = ResourceOp(
                     title=resource.title,
-                    fn=resource.acquire,
+                    resource=resource,
+                    operation=ResourceOperation.ACQUIRE,
                     idempotent=resource.acquire_idempotent,
                 )
                 merged.append(CompiledTask(task_id="", task=op, kind="acquire", resource=resource))
@@ -405,6 +448,10 @@ class Workflow:
                 CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")
             )
             for resource in releases_after.get(index, ()):
-                op = ResourceOp(title=resource.release_title, fn=resource.release)
+                op = ResourceOp(
+                    title=resource.release_title,
+                    resource=resource,
+                    operation=ResourceOperation.RELEASE,
+                )
                 merged.append(CompiledTask(task_id="", task=op, kind="release", resource=resource))
         return merged

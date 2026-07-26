@@ -8,21 +8,25 @@ from typing import override
 
 import pytest
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import Evidence, TaskOutcome
+from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
+from sonata_engine.errors import UndeclaredResourceError
 
 
 class ValidTask(Task[int]):
     title = "Valid"
 
     @override
-    def run(self) -> TaskOutcome[int]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[int]:
+        assert inputs == TaskInputs.empty()
         return TaskOutcome(value=42)
 
 
 def test_valid_task_subclass_is_accepted() -> None:
     task = ValidTask()
-    outcome = task.run()
+    outcome = task.run(TaskInputs.empty())
     assert isinstance(task, Task)
     assert outcome == TaskOutcome(value=42)
 
@@ -50,13 +54,13 @@ def test_reusable_task_returns_none_outcome() -> None:
         reuse_key = "reusable-v1"
 
         @override
-        def run(self) -> TaskOutcome[None]:
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
             return TaskOutcome()
 
     task = MyReusable()
     assert isinstance(task, Task)
     assert task.reusable is True
-    assert task.run() == TaskOutcome()
+    assert task.run(TaskInputs.empty()) == TaskOutcome()
 
 
 def test_reusable_task_requires_a_semantic_reuse_key() -> None:
@@ -64,7 +68,7 @@ def test_reusable_task_requires_a_semantic_reuse_key() -> None:
         title = "Reusable"
 
         @override
-        def run(self) -> TaskOutcome[None]:
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
             return TaskOutcome()
 
     with pytest.raises(TypeError):
@@ -74,6 +78,25 @@ def test_reusable_task_requires_a_semantic_reuse_key() -> None:
 def test_evidence_digest_defaults_to_none() -> None:
     evidence = Evidence(kind="log", reference="s3://bucket/key")
     assert evidence.digest is None
+
+
+def test_task_inputs_only_exposes_declared_resource_values() -> None:
+    database = Resource[str](
+        title="Acquire database",
+        acquire=lambda _inputs: "postgres://db",
+        release=lambda _inputs, _value: None,
+    )
+    cache = Resource[None](
+        title="Acquire cache",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+    )
+
+    inputs = TaskInputs._for_resources({database: "postgres://db", cache: None}, {database})
+
+    assert inputs.resource(database) == "postgres://db"
+    with pytest.raises(UndeclaredResourceError):
+        inputs.resource(cache)
 
 
 def test_invalid_run_override_fails_static_type_check() -> None:

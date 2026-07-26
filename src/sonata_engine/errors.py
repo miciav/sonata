@@ -5,6 +5,14 @@ class InvalidTaskOutcomeError(Exception):
     """Raised when a compiled task's `run()` returns something other than `TaskOutcome`."""
 
 
+class UndeclaredResourceError(Exception):
+    """Raised when a task tries to read a resource it did not declare."""
+
+
+class ResourceUnavailableError(Exception):
+    """Raised when a declared resource has not been acquired."""
+
+
 class ResumeConfigurationError(Exception):
     """Raised when `resume=True` is requested without a `JournalConfig`."""
 

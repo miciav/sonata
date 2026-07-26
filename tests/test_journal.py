@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import Evidence, TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
@@ -19,7 +20,7 @@ class _Ok(Task[None]):
         self.title = title
         self._evidence = evidence
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome(evidence=self._evidence)
 
 
@@ -39,7 +40,7 @@ class _ReusableOk(ReusableTask):
     def reuse_key(self) -> str:
         return self._reuse_key
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         self.ran = True
         return TaskOutcome(evidence=self._evidence)
 
@@ -47,7 +48,7 @@ class _ReusableOk(ReusableTask):
 class _Boom(Task[None]):
     title = "Boom"
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         raise RuntimeError("boom")
 
 
@@ -55,7 +56,7 @@ class _Replacement(Task[None]):
     def __init__(self, title: str) -> None:
         self.title = title
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
 
 
@@ -80,7 +81,7 @@ def test_complete_topology_is_pending_before_first_task_runs(tmp_path: Path) -> 
     class _Inspect(Task[None]):
         title = "Inspect"
 
-        def run(self) -> TaskOutcome[None]:
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
             seen.extend(_records(config.path))
             return TaskOutcome()
 
@@ -122,8 +123,8 @@ def test_retained_infrastructure_finalizer_is_journaled_as_skipped(
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     resource = Resource(
         title="Acquire cluster",
-        acquire=lambda: None,
-        release=lambda: None,
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
         infrastructure=True,
     )
     workflow = Workflow(workflow_id="wf", keep_infrastructure=True)
@@ -245,9 +246,9 @@ def test_retries_add_attempts_without_new_logical_task(tmp_path: Path) -> None:
 
 
 def test_task_run_never_receives_a_journal_object() -> None:
-    # The engine records to the journal; task bodies stay `() -> TaskOutcome`.
-    assert list(inspect.signature(_Ok.run).parameters) == ["self"]
-    assert list(inspect.signature(_Boom.run).parameters) == ["self"]
+    # The engine records to the journal; task bodies receive only TaskInputs.
+    assert list(inspect.signature(_Ok.run).parameters) == ["self", "inputs"]
+    assert list(inspect.signature(_Boom.run).parameters) == ["self", "inputs"]
 
 
 def test_records_started_then_passed(tmp_path: Path) -> None:
@@ -278,7 +279,11 @@ def test_records_started_then_failed(tmp_path: Path) -> None:
 
 
 def test_records_finalizer_outcomes(tmp_path: Path) -> None:
-    resource = Resource(title="Acquire db", acquire=lambda: None, release=lambda: None)
+    resource = Resource(
+        title="Acquire db",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+    )
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Ok("Use"), requires=(resource,))
     config = JournalConfig(path=tmp_path / "journal.jsonl")
@@ -303,7 +308,7 @@ def test_started_record_is_durable_before_task_body_runs(tmp_path: Path) -> None
     class _Peek(Task[None]):
         title = "Peek"
 
-        def run(self) -> TaskOutcome[None]:
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
             # The started record must already be flushed to disk mid-task.
             seen["records"] = _records(config.path)
             return TaskOutcome()
@@ -316,10 +321,10 @@ def test_started_record_is_durable_before_task_body_runs(tmp_path: Path) -> None
 
 
 def test_release_failure_records_failed_outcome(tmp_path: Path) -> None:
-    def _boom() -> None:
+    def _boom(_inputs: TaskInputs, _value: object) -> None:
         raise RuntimeError("release boom")
 
-    resource = Resource(title="Acquire db", acquire=lambda: None, release=_boom)
+    resource = Resource(title="Acquire db", acquire=lambda _inputs: None, release=_boom)
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Ok("Use"), requires=(resource,))
     config = JournalConfig(path=tmp_path / "journal.jsonl")

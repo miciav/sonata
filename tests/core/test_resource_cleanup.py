@@ -7,10 +7,12 @@ from typing import Generator
 
 import pytest
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import Task
 from sonata_engine.core.workflow import Workflow
+from sonata_engine.errors import UndeclaredResourceError
 from sonata_engine.journal import Journal, JournalConfig
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
@@ -24,7 +26,7 @@ class _RecordTask(Task[None]):
         self._calls = calls
         self._fail = fail
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         self._calls.append(self.title)
         if self._fail:
             raise RuntimeError(f"{self.title} failed")
@@ -34,8 +36,8 @@ class _RecordTask(Task[None]):
 def _resource(name: str, calls: list[str], *, infrastructure: bool = False) -> Resource:
     return Resource(
         title=f"Acquire {name}",
-        acquire=lambda: calls.append(f"acquire.{name}"),
-        release=lambda: calls.append(f"release.{name}"),
+        acquire=lambda _inputs: calls.append(f"acquire.{name}"),
+        release=lambda _inputs, _value: calls.append(f"release.{name}"),
         infrastructure=infrastructure,
     )
 
@@ -184,6 +186,47 @@ def test_releases_run_in_reverse_acquisition_order() -> None:
     ]
 
 
+def test_resource_value_is_visible_only_to_declared_consumers_and_release() -> None:
+    calls: list[object] = []
+    database = Resource[dict[str, str]](
+        title="Acquire database",
+        acquire=lambda _inputs: {"url": "postgres://db"},
+        release=lambda _inputs, value: calls.append(value),
+    )
+
+    class _ReadDatabase(Task[None]):
+        title = "Read database"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            calls.append(inputs.resource(database))
+            return TaskOutcome()
+
+    Workflow(workflow_id="wf").add(_ReadDatabase(), requires=(database,)).run()
+
+    assert calls == [{"url": "postgres://db"}, {"url": "postgres://db"}]
+
+
+def test_consumer_cannot_read_undeclared_resource() -> None:
+    resource = Resource[None](
+        title="Acquire database",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
+    )
+
+    class _ReadUndeclared(Task[None]):
+        title = "Read undeclared"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            inputs.resource(resource)
+            return TaskOutcome()
+
+    workflow = _workflow()
+    workflow.add(_ReadUndeclared())
+
+    with pytest.raises(UndeclaredResourceError):
+        workflow.run()
+
+
 def test_consumer_failure_releases_acquired_in_reverse() -> None:
     calls: list[str] = []
     first = _resource("first", calls)
@@ -211,13 +254,13 @@ def test_acquire_failure_releases_earlier_resources_only() -> None:
     calls: list[str] = []
     good = _resource("good", calls)
 
-    def bad_acquire() -> None:
+    def bad_acquire(_inputs: TaskInputs) -> None:
         raise RuntimeError("acquire exploded")
 
     bad = Resource(
         title="Acquire bad",
         acquire=bad_acquire,
-        release=lambda: calls.append("release.bad"),
+        release=lambda _inputs, _value: calls.append("release.bad"),
     )
     workflow = _workflow()
     workflow.add(_RecordTask("A", calls), requires=(good,))
@@ -231,10 +274,10 @@ def test_acquire_failure_releases_earlier_resources_only() -> None:
 
 
 def test_consumer_failure_and_release_failure_are_combined() -> None:
-    def fail_release() -> None:
+    def fail_release(_inputs: TaskInputs, _value: object) -> None:
         raise RuntimeError("release failed")
 
-    resource = Resource(title="Acquire res", acquire=lambda: None, release=fail_release)
+    resource = Resource(title="Acquire res", acquire=lambda _inputs: None, release=fail_release)
     workflow = _workflow()
     workflow.add(_RecordTask("Boom", [], fail=True), requires=(resource,))
 
@@ -246,10 +289,10 @@ def test_consumer_failure_and_release_failure_are_combined() -> None:
 
 
 def test_release_failure_alone_is_raised() -> None:
-    def fail_release() -> None:
+    def fail_release(_inputs: TaskInputs, _value: object) -> None:
         raise RuntimeError("release failed")
 
-    resource = Resource(title="Acquire res", acquire=lambda: None, release=fail_release)
+    resource = Resource(title="Acquire res", acquire=lambda _inputs: None, release=fail_release)
     workflow = _workflow()
     workflow.add(_RecordTask("Use", []), requires=(resource,))
 
@@ -381,14 +424,14 @@ def test_all_finalizers_run_after_release_and_journal_failures(
 ) -> None:
     calls: list[str] = []
 
-    def _failed_release() -> None:
+    def _failed_release(_inputs: TaskInputs, _value: object) -> None:
         calls.append("release.second")
         raise RuntimeError("release failed")
 
     first = _resource("first", calls)
     second = Resource(
         title="Acquire second",
-        acquire=lambda: calls.append("acquire.second"),
+        acquire=lambda _inputs: calls.append("acquire.second"),
         release=_failed_release,
     )
     workflow = _workflow()
@@ -414,13 +457,13 @@ def test_base_exception_in_finalizer_does_not_abort_remaining_cleanup() -> None:
     calls: list[str] = []
     first = _resource("first", calls)
 
-    def _interrupt_release() -> None:
+    def _interrupt_release(_inputs: TaskInputs, _value: object) -> None:
         calls.append("release.second")
         raise KeyboardInterrupt
 
     second = Resource(
         title="Acquire second",
-        acquire=lambda: calls.append("acquire.second"),
+        acquire=lambda _inputs: calls.append("acquire.second"),
         release=_interrupt_release,
     )
     workflow = _workflow()
@@ -436,13 +479,13 @@ def test_finalizer_base_exception_remains_primary_after_task_failure() -> None:
     calls: list[str] = []
     first = _resource("first", calls)
 
-    def _interrupt_release() -> None:
+    def _interrupt_release(_inputs: TaskInputs, _value: object) -> None:
         calls.append("release.second")
         raise KeyboardInterrupt
 
     second = Resource(
         title="Acquire second",
-        acquire=lambda: calls.append("acquire.second"),
+        acquire=lambda _inputs: calls.append("acquire.second"),
         release=_interrupt_release,
     )
     workflow = _workflow()

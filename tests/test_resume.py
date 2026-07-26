@@ -8,6 +8,7 @@ from typing import Generator
 
 import pytest
 
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import Evidence, TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
@@ -32,7 +33,7 @@ class _Tracker(Task[None]):
         self._evidence = evidence
         self.ran = False
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         self.ran = True
         return TaskOutcome(evidence=self._evidence)
 
@@ -53,7 +54,7 @@ class _ReusableTracker(ReusableTask):
     def reuse_key(self) -> str:
         return self._reuse_key
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         self.ran = True
         return TaskOutcome(evidence=self._evidence)
 
@@ -319,8 +320,8 @@ def test_non_idempotent_acquire_never_retries_ambiguous_state(
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
-        acquire=lambda: calls.append("acquire"),
-        release=lambda: calls.append("release"),
+        acquire=lambda _inputs: calls.append("acquire"),
+        release=lambda _inputs, _value: calls.append("release"),
         acquire_idempotent=False,
     )
     workflow = Workflow(workflow_id="wf")
@@ -346,8 +347,8 @@ def test_idempotent_acquire_retries_ambiguous_state(
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
-        acquire=lambda: calls.append("acquire"),
-        release=lambda: calls.append("release"),
+        acquire=lambda _inputs: calls.append("acquire"),
+        release=lambda _inputs, _value: calls.append("release"),
         acquire_idempotent=True,
     )
     workflow = Workflow(workflow_id="wf")
@@ -371,8 +372,8 @@ def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
-        acquire=lambda: calls.append("acquire"),
-        release=lambda: calls.append("release"),
+        acquire=lambda _inputs: calls.append("acquire"),
+        release=lambda _inputs, _value: calls.append("release"),
     )
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Tracker("Use vm"), requires=(resource,))
@@ -398,14 +399,14 @@ def test_release_journal_failure_does_not_mask_main_error_or_abort_cleanup(
     calls: list[str] = []
     resource = Resource(
         title="Acquire vm",
-        acquire=lambda: calls.append("acquire"),
-        release=lambda: calls.append("release"),
+        acquire=lambda _inputs: calls.append("acquire"),
+        release=lambda _inputs, _value: calls.append("release"),
     )
 
     class _FailTask(Task[None]):
         title = "Consume"
 
-        def run(self) -> TaskOutcome[None]:
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
             raise RuntimeError("consume failed")
 
     workflow = Workflow(workflow_id="wf")

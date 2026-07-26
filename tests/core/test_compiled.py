@@ -5,6 +5,7 @@ import dataclasses
 import pytest
 
 from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
+from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import ReusableTask, Task
 
@@ -13,7 +14,7 @@ class _NoopTask(Task[None]):
     def __init__(self, title: str) -> None:
         self.title = title
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
 
 
@@ -27,7 +28,7 @@ class _ReusableNoop(ReusableTask):
     def reuse_key(self) -> str:
         return self._reuse_key
 
-    def run(self) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
 
 
