@@ -29,3 +29,12 @@ class WorkflowTopologyMismatchError(Exception):
 
 class CorruptJournalError(Exception):
     """Raised when a journal contains a malformed complete record."""
+
+
+class SelectionError(Exception):
+    """Raised when a `Selection` cannot be resolved against a workflow's tasks.
+
+    Covers a malformed selection (mutually exclusive fields, inverted range) and
+    one that does not resolve to exactly one task per endpoint (unknown or
+    ambiguous slug).
+    """
