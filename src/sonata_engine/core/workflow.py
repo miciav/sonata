@@ -14,8 +14,13 @@ from sonata_engine.core.compiled import (
 )
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource, ResourceOp
+from sonata_engine.core.selection import Selection
 from sonata_engine.core.task import ReusableTask, Task
-from sonata_engine.errors import InvalidTaskOutcomeError, ResumeConfigurationError
+from sonata_engine.errors import (
+    InvalidTaskOutcomeError,
+    ResumeConfigurationError,
+    SelectionError,
+)
 from sonata_engine.journal import Journal, JournalConfig, Verifier
 from sonata_engine.workflow.reporting import _task_lifecycle, _task_skipped
 
@@ -24,6 +29,24 @@ _SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 
 def _slugify(title: str) -> str:
     return _SLUG_INVALID_CHARS.sub("-", title.lower()).strip("-")
+
+
+def _resolve_slug(slugs: list[str], wanted: str) -> int:
+    """Index of the single consumer whose slug is `wanted`.
+
+    Ambiguity is an error rather than an implicit multi-select: duplicate titles
+    are legal (the ordinal disambiguates their IDs) but stop being addressable.
+    """
+    matches = [index for index, slug in enumerate(slugs) if slug == wanted]
+    if not matches:
+        available = ", ".join(sorted(set(slugs)))
+        raise SelectionError(f"no task matches slug {wanted!r}; available: {available}")
+    if len(matches) > 1:
+        raise SelectionError(
+            f"slug {wanted!r} matches {len(matches)} tasks; "
+            "titles must be unique for a task to be selectable"
+        )
+    return matches[0]
 
 
 @dataclass
@@ -279,7 +302,7 @@ class Workflow:
         self._definitions.append((task, requires))
         return self
 
-    def compile(self) -> CompiledWorkflow:
+    def compile(self, *, select: Selection | None = None) -> CompiledWorkflow:
         """Assign stable, deterministic IDs to the recorded task definitions.
 
         Each `Resource` referenced across `requires` gets one acquire unit
@@ -288,11 +311,16 @@ class Workflow:
         run in reverse acquisition order (last-acquired-first-released). IDs are
         `{ordinal:03d}.{slug}` derived from position in the final merged
         sequence; duplicate titles are disambiguated by ordinal.
+
+        `select` filters consumer definitions BEFORE resources are spliced, so
+        the surviving consumers still get their acquire/release units. Ordinals
+        renumber over the survivors: a sliced run is a different topology, and
+        the journal fingerprint will refuse to resume across it.
         """
         if not self.workflow_id:
             raise ValueError("Workflow.compile() requires a non-empty workflow_id")
 
-        merged = self._merge_resources()
+        merged = self._merge_resources(self._select(select))
         compiled_tasks = tuple(
             CompiledTask(
                 task_id=f"{ordinal:03d}.{_slugify(entry.task.title)}",
@@ -305,12 +333,38 @@ class Workflow:
         )
         return CompiledWorkflow(workflow_id=self.workflow_id, tasks=compiled_tasks)
 
-    def _merge_resources(self) -> list[CompiledTask[Any]]:
+    def _select(
+        self, select: Selection | None
+    ) -> list[tuple[Task[Any], tuple[Resource, ...]]]:
+        """Filter consumer definitions by title slug, leaving resources to the compiler."""
+        slugs = [_slugify(task.title) for task, _requires in self._definitions]
+        for slug, (task, _requires) in zip(slugs, self._definitions):
+            if not slug:
+                raise ValueError(f"task title {task.title!r} produces an empty slug")
+        if select is None or select.is_empty:
+            return list(self._definitions)
+        if select.only is not None:
+            return [self._definitions[_resolve_slug(slugs, select.only)]]
+        first = _resolve_slug(slugs, select.start) if select.start is not None else 0
+        last = (
+            _resolve_slug(slugs, select.until)
+            if select.until is not None
+            else len(self._definitions) - 1
+        )
+        if first > last:
+            raise SelectionError(
+                f"start {select.start!r} comes after until {select.until!r}"
+            )
+        return list(self._definitions[first : last + 1])
+
+    def _merge_resources(
+        self, definitions: list[tuple[Task[Any], tuple[Resource, ...]]]
+    ) -> list[CompiledTask[Any]]:
         """Splice acquire/release units around consumers (IDs assigned by caller)."""
         # First/last consumer index per resource, in discovery order.
         first: dict[Resource, int] = {}
         last: dict[Resource, int] = {}
-        for index, (_task, requires) in enumerate(self._definitions):
+        for index, (_task, requires) in enumerate(definitions):
             for resource in requires:
                 first.setdefault(resource, index)
                 last[resource] = index
@@ -333,7 +387,7 @@ class Workflow:
             group.sort(key=lambda r: acquire_rank[r], reverse=True)
 
         merged: list[CompiledTask[Any]] = []
-        for index, (task, requires) in enumerate(self._definitions):
+        for index, (task, requires) in enumerate(definitions):
             for resource in acquires_before.get(index, ()):
                 op = ResourceOp(
                     title=resource.title,
