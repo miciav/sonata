@@ -156,6 +156,14 @@ own. `slug` is a constructor argument, not a hardcoded literal, because two
 instances of the same task class (two `PublishImages` in one workflow) need
 something to tell their subtask ids apart.
 
+The snippet above is a sketch. For a version that runs — with the sink the
+events need somewhere to go, since `subtask` is a silent no-op without one —
+see `examples/demo_workflow.py`:
+
+```
+uv run python examples/demo_workflow.py
+```
+
 Open subtasks sequentially, on the thread running the task. The parent is
 resolved through a context shared as a fallback for worker threads (which
 start with none of their own); subtasks opened concurrently from worker

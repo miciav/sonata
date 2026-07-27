@@ -36,13 +36,17 @@ from sonata_engine.workflow import (
     WorkflowRun,
     WorkflowSink,
     WorkflowState,
+    bind_workflow_sink,
+    status,
     subtask,
+    workflow_log,
 )
 
 __version__ = "0.3.0"
 
 __all__ = [
     "AmbiguousTaskStateError",
+    "bind_workflow_sink",
     "CompiledTask",
     "CompiledWorkflow",
     "CorruptJournalError",
@@ -57,6 +61,7 @@ __all__ = [
     "ReusableTask",
     "Selection",
     "SelectionError",
+    "status",
     "subtask",
     "Task",
     "TaskInputs",
@@ -68,6 +73,7 @@ __all__ = [
     "UndeclaredResourceError",
     "Verifier",
     "Workflow",
+    "workflow_log",
     "WorkflowContext",
     "WorkflowEvent",
     "WorkflowResult",

@@ -80,7 +80,15 @@ class CompiledWorkflow:
 
 @dataclass(frozen=True, slots=True)
 class TaskExecution:
-    """The runtime result of one compiled task unit."""
+    """The runtime result of one compiled task unit.
+
+    `outcome` is `None` exactly when `status` is `"skipped"` — the `None`
+    reports the skip, not a task that ran and returned nothing. A task that
+    ran always has a `TaskOutcome`, whose `value` may itself be `None`. So
+    read a result as `execution.outcome.value if execution.outcome else ...`;
+    there is deliberately no `execution.value` shortcut, because collapsing
+    the two cases would throw that distinction away.
+    """
 
     task_id: str
     status: TaskExecutionStatus
