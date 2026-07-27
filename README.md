@@ -109,30 +109,51 @@ whichever task is running:
 ```python
 from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
 
-class BuildImages(Task[None]):
-    title = "Build images"
+class PublishImages(Task[str]):
+    title = "Publish images"
 
     def __init__(self, slug: str, images: tuple[str, ...]) -> None:
         self._slug = slug
         self._images = images
 
-    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
         for image in self._images:
-            with subtask(task_id=f"{self._slug}/{image}", title=f"Build {image}"):
+            with subtask(task_id=f"{self._slug}/build/{image}", title=f"Build {image}"):
                 ...  # build it
-        return TaskOutcome()
+
+        with subtask(task_id=f"{self._slug}/scan", title="Scan for vulnerabilities"):
+            ...  # scan everything built above
+
+        with subtask(task_id=f"{self._slug}/push", title="Push the tags"):
+            digest = ...  # push, and keep what the registry answered
+
+        return TaskOutcome(value=digest)
+```
+
+Subtasks need not come from a loop and need not resemble each other — those are
+three different kinds of step, and the last one produces the value the whole
+task returns. Added as `PublishImages("publish-images", ("control-plane",
+"function-runtime"))`, it emits:
+
+```
+001.publish-images
+├── publish-images/build/control-plane
+├── publish-images/build/function-runtime
+├── publish-images/scan
+└── publish-images/push
 ```
 
 The step stays one compiled unit: one ordinal, one entry in the journal, one
-thing `Selection` can name. Subtasks exist in the event stream only, so a
-consumer's UI can show progress through a long step, and a resumed run restarts
-that step from its beginning.
+thing `Selection` can name. If the scan fails the whole unit fails — sharing
+one fate is what makes these one unit rather than four. Subtasks exist in the
+event stream only, so a consumer's UI can show progress through a long step,
+and a resumed run restarts that step from its beginning.
 
 Pick `task_id` yourself and keep it unique within the run — a consumer keys
 child phases by it, so a repeat merges two steps into one. Do not imitate the
 compiler's `NNN.slug`: those ids are the engine's, and a task is not told its
 own. `slug` is a constructor argument, not a hardcoded literal, because two
-instances of the same task class (two `BuildImages` in one workflow) need
+instances of the same task class (two `PublishImages` in one workflow) need
 something to tell their subtask ids apart.
 
 Open subtasks sequentially, on the thread running the task. The parent is
