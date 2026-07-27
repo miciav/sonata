@@ -5,6 +5,7 @@ from typing import Generator
 
 import pytest
 
+from sonata_engine import subtask
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import ReusableTask, Task
@@ -242,3 +243,32 @@ def test_run_is_noop_safe_without_sink() -> None:
     workflow.add(_NoopTask("Prepare source"))
 
     workflow.run()  # no sink bound, must not raise
+
+
+def test_subtasks_do_not_become_compiled_units() -> None:
+    """The whole point: a step made of many stays one unit, so ordinals and
+    selection are unaffected by what a task does inside its own run()."""
+
+    class Composite(Task[None]):
+        title = "Build images"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            for name in ("cp", "fn"):
+                with subtask(task_id=f"build-images/{name}", title=name):
+                    pass
+            return TaskOutcome()
+
+    sink = _FakeSink()
+    workflow = Workflow(workflow_id="w")
+    workflow.add(Composite())
+
+    compiled = workflow.compile()
+    with bind_workflow_sink(sink):
+        workflow.run()
+
+    assert [task.task_id for task in compiled.tasks] == ["001.build-images"]
+    assert [event.task_id for event in sink.events if event.kind == "task.started"] == [
+        "001.build-images",
+        "build-images/cp",
+        "build-images/fn",
+    ]

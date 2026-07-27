@@ -36,6 +36,7 @@ from sonata_engine.workflow import (
     WorkflowRun,
     WorkflowSink,
     WorkflowState,
+    subtask,
 )
 
 __version__ = "0.2.0"
@@ -56,6 +57,7 @@ __all__ = [
     "ReusableTask",
     "Selection",
     "SelectionError",
+    "subtask",
     "Task",
     "TaskInputs",
     "TaskDefinition",
