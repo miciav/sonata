@@ -74,10 +74,13 @@ Implementation is `_task_lifecycle` with its restriction lifted: same emit,
 same `_child_context`, whose existing fallback supplies the parent.
 
 `task_id` is the caller's to choose and must be unique within the run; the
-compiler owns `NNN.slug` identities and must never be imitated. Recommended
-shape: `<parent-id>/<slug>`, e.g. `003.build-images/control-plane`. The
-aggregator keys children by `task_id` (`_phase_by_task_id`), so a repeated id
-would merge two steps into one phase.
+compiler owns `NNN.slug` identities and they must never be imitated. A task is
+not told the ordinal the compiler gave it, so the id has to be built from what
+the task itself knows — its own name extended by the step reads well, e.g.
+`build-images/control-plane`. The aggregator keys children by `task_id`
+(`_phase_by_task_id`), so a repeated id would merge two steps into one phase;
+two instances of the same composite in one workflow therefore need something
+that tells them apart.
 
 Nesting is whatever the call stack produces: a subtask that itself opens a
 subtask nests two deep, because each `subtask` binds its own context. The TUI
@@ -93,14 +96,15 @@ is ordinary object composition — which is exactly how `workflow-tasks` did it
 class DockerBuildImagesTask(Task[tuple[TaskResult, ...]]):
     """Build several images as one step of the workflow."""
 
-    def __init__(self, *, title: str, builds: tuple[DockerBuildTask, ...]) -> None:
+    def __init__(self, *, title: str, slug: str, builds: tuple[DockerBuildTask, ...]) -> None:
         self.title = title
+        self._slug = slug
         self._builds = builds
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[TaskResult, ...]]:
         results = []
         for build in self._builds:
-            with subtask(task_id=f"{self.title}/{build.image}", title=build.title):
+            with subtask(task_id=f"{self._slug}/{build.image}", title=build.title):
                 results.append(build.run(inputs).value)
         return TaskOutcome(value=tuple(results))
 ```
