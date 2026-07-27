@@ -107,7 +107,7 @@ Expected: FAIL with `ImportError: cannot import name 'subtask'`.
 
 - [x] **Step 3: Implement it**
 
-In `src/sonata_engine/workflow/reporting.py`, add `subtask` immediately after `_task_lifecycle`. It delegates rather than repeating the body: the emit sequence, the `_child_context` fallback and the `add_note` handling for a sink that fails while reporting a failure are the delicate part of `_task_lifecycle`, and a second copy of them would have nothing keeping it in step.
+In `src/sonata_engine/workflow/reporting.py`, add `subtask` immediately after `_task_lifecycle`, delegating to it for the reason given under Architecture above.
 
 ```python
 @contextmanager
@@ -290,50 +290,18 @@ git commit -m "Export subtask and pin the compiled topology it must not change"
 
 - [x] **Step 1: Add the section**
 
-README.md's top-level sections are `## v2 workflow API`, `## Resources`, `## Selecting a slice`, `## Journal and resume`, `## Development`. Insert the following between `## Resources` and `## Selecting a slice` — after resources, because the acquire of one is the most common place to want it; before slicing, because the paragraph explains what selection does and does not see. It is a `##` section of its own, not a subsection of Resources: it is unrelated to resource acquisition.
+README.md's top-level sections are `## v2 workflow API`, `## Resources`, `## Selecting a slice`, `## Journal and resume`, `## Development`. Insert a new section between `## Resources` and `## Selecting a slice` — after resources, because the acquire of one is the most common place to want it; before slicing, because the paragraph explains what selection does and does not see. It is a `##` section of its own, not a subsection of Resources: it is unrelated to resource acquisition.
 
-```markdown
-## Reporting steps inside a task
+The section must cover four things: a worked example of a task opening a
+subtask per step; that the step stays one compiled unit, so subtasks live in
+the event stream only and a resumed run restarts the step from its beginning;
+that `task_id` is the caller's, must be unique within the run, and must not
+imitate the compiler's `NNN.slug`; and that subtasks must be opened
+sequentially on the task's own thread.
 
-A task that does several things can report them without becoming several
-units. `subtask` emits the same events a compiled unit does, nested under
-whichever task is running:
-
-```python
-from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
-
-class BuildImages(Task[None]):
-    title = "Build images"
-
-    def __init__(self, slug: str, images: tuple[str, ...]) -> None:
-        self._slug = slug
-        self._images = images
-
-    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
-        for image in self._images:
-            with subtask(task_id=f"{self._slug}/{image}", title=f"Build {image}"):
-                ...  # build it
-        return TaskOutcome()
-```
-
-The step stays one compiled unit: one ordinal, one entry in the journal, one
-thing `Selection` can name. Subtasks exist in the event stream only, so a
-consumer's UI can show progress through a long step, and a resumed run restarts
-that step from its beginning.
-
-Pick `task_id` yourself and keep it unique within the run — a consumer keys
-child phases by it, so a repeat merges two steps into one. Do not imitate the
-compiler's `NNN.slug`: those ids are the engine's, and a task is not told its
-own. `slug` is a constructor argument, not a hardcoded literal, because two
-instances of the same task class (two `BuildImages` in one workflow) need
-something to tell their subtask ids apart.
-
-Open subtasks sequentially, on the thread running the task. The parent is
-resolved through a context shared as a fallback for worker threads (which
-start with none of their own); subtasks opened concurrently from worker
-threads — or one left open past its `with` block while another opens — nest
-under each other instead of under the unit, silently.
-```
+The wording as shipped is in README.md's `## Reporting steps inside a task` —
+that file is the single copy, deliberately not duplicated here, because a plan
+kept in sync with live documentation by hand is a plan that goes stale.
 
 - [x] **Step 2: Commit**
 
@@ -348,5 +316,5 @@ git commit -m "Document subtask reporting"
 
 - **Spec coverage.** Design section → Tasks 1 and 2. "What does not change" → the compiled-topology test in Task 2. Testing section → all four engine cases are in Task 1 except topology invariance, which needs a real workflow and so sits in Task 2: both halves of that bullet, the plain unit-list comparison and `Selection(only=<enclosing step>)` keeping the step whole, are asserted there. The consumer-side TUI test named in the spec is downstream work in nanolab, not part of this plan.
 - **Deliberately not here.** Nothing teaches the journal about subtasks, and nothing lets `Selection` name one; both are stated non-goals. Workflow-as-a-task is untouched.
-- **Risk.** The only edits to existing code are one docstring and one `add_note` message; `subtask` itself adds no behaviour, it delegates to the code the runner already uses. Everything else is additive, which is why the topology test in Task 2 is the load-bearing one: it fails loudly if `subtask` ever starts affecting compilation.
+- **Risk.** The only edits to existing code are one docstring and one `add_note` message. Everything else is additive, which is why the topology test in Task 2 is the load-bearing one: it fails loudly if `subtask` ever starts affecting compilation.
 - **Left open deliberately: id collisions — wrong layer, not unhit.** `task_id` is unique within a run only because the caller made it so. A task cannot qualify its ids with its own compiled ordinal — not knowing it is the point — so two instances of the same task class in one workflow emit the same subtask ids. That is not an event-stream defect: the engine gives the two `task.started` events distinct `parent_task_id`s (`001.build-images` vs `002.build-images-again`), so nothing is lost on the wire. The merge is purely a property of a downstream consumer keying its phase map on `task_id` alone (`_phase_by_task_id`). The engine could still close it by prefixing `task_id` with the resolved parent inside `subtask`, but that changes the id shape every consumer already renders and logs, to fix something the consumer fixes by keying on `(parent_task_id, task_id)` instead. Deferral stands; revisit only if keying on the pair turns out to be insufficient, not merely unhit.
