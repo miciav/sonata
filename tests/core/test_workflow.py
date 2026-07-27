@@ -8,6 +8,7 @@ import pytest
 from sonata_engine import subtask
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
+from sonata_engine.core.selection import Selection
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
 from sonata_engine.errors import InvalidTaskOutcomeError
@@ -272,3 +273,6 @@ def test_subtasks_do_not_become_compiled_units() -> None:
         "build-images/cp",
         "build-images/fn",
     ]
+
+    selected = workflow.compile(select=Selection(only="build-images"))
+    assert [task.task_id for task in selected.tasks] == ["001.build-images"]

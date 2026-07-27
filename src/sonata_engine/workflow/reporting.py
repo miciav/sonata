@@ -119,6 +119,14 @@ def subtask(*, task_id: str, title: str = "") -> Generator[None, None, None]:
     compiler owns `NNN.slug` and a caller must not mint ids in that shape; build
     one from what the task itself knows instead, which reads well as its own
     name extended by the step: `build-images/cp`.
+
+    Open subtasks sequentially, on the thread running the task. The parent
+    comes from a context shared across threads as a fallback for worker
+    threads (which start with no contextvars context of their own); two
+    subtasks opened concurrently in worker threads will nest under each
+    other instead of under the unit, silently. The same happens if a
+    subtask outlives its `with` block (parked in an `ExitStack`, for
+    instance) while another subtask opens.
     """
     with _task_lifecycle(task_id=task_id, title=title):
         yield

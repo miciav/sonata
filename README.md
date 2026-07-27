@@ -100,24 +100,25 @@ keeping a deployment while releasing the VM or cluster it still depends on.
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.
 
-### Reporting steps inside a task
+## Reporting steps inside a task
 
 A task that does several things can report them without becoming several
 units. `subtask` emits the same events a compiled unit does, nested under
 whichever task is running:
 
 ```python
-from sonata_engine import Task, TaskOutcome, subtask
+from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
 
 class BuildImages(Task[None]):
     title = "Build images"
 
-    def __init__(self, images: tuple[str, ...]) -> None:
+    def __init__(self, slug: str, images: tuple[str, ...]) -> None:
+        self._slug = slug
         self._images = images
 
-    def run(self, inputs):
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         for image in self._images:
-            with subtask(task_id=f"build-images/{image}", title=f"Build {image}"):
+            with subtask(task_id=f"{self._slug}/{image}", title=f"Build {image}"):
                 ...  # build it
         return TaskOutcome()
 ```
@@ -130,7 +131,15 @@ that step from its beginning.
 Pick `task_id` yourself and keep it unique within the run — a consumer keys
 child phases by it, so a repeat merges two steps into one. Do not imitate the
 compiler's `NNN.slug`: those ids are the engine's, and a task is not told its
-own.
+own. `slug` is a constructor argument, not a hardcoded literal, because two
+instances of the same task class (two `BuildImages` in one workflow) need
+something to tell their subtask ids apart.
+
+Open subtasks sequentially, on the thread running the task. The parent is
+resolved through a context shared as a fallback for worker threads (which
+start with none of their own); subtasks opened concurrently from worker
+threads — or one left open past its `with` block while another opens — nest
+under each other instead of under the unit, silently.
 
 ## Selecting a slice
 

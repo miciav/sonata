@@ -30,7 +30,7 @@
 - Consumes: `_task_lifecycle`, already in `reporting.py`.
 - Produces: `subtask(*, task_id: str, title: str = "") -> AbstractContextManager[None]`, later exported from `sonata_engine`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `tests/workflow/test_reporting.py`. `_FakeSink` and the imports of `bind_workflow_sink` already exist at the top of that file; add `subtask` and `bind_workflow_context` to the existing import lines.
 
@@ -100,12 +100,12 @@ from sonata_engine.workflow.events import WorkflowContext, WorkflowEvent
 from sonata_engine.workflow.reporting import status, subtask, workflow_log
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/workflow/test_reporting.py -q`
 Expected: FAIL with `ImportError: cannot import name 'subtask'`.
 
-- [ ] **Step 3: Implement it**
+- [x] **Step 3: Implement it**
 
 In `src/sonata_engine/workflow/reporting.py`, add `subtask` immediately after `_task_lifecycle`. It delegates rather than repeating the body: the emit sequence, the `_child_context` fallback and the `add_note` handling for a sink that fails while reporting a failure are the delicate part of `_task_lifecycle`, and a second copy of them would have nothing keeping it in step.
 
@@ -162,12 +162,12 @@ with:
     report steps it performs itself uses `subtask`, which nests under this one.
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/workflow/test_reporting.py -q`
 Expected: PASS, 10 tests — the five existing ones plus these five.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/sonata_engine/workflow/reporting.py tests/workflow/test_reporting.py
@@ -187,7 +187,7 @@ git commit -m "Let a task report the steps inside its own run()"
 - Consumes: `subtask` from Task 1.
 - Produces: `from sonata_engine import subtask` works.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `tests/core/test_workflow.py`. That file already imports `Task`, `TaskInputs`, `TaskOutcome`, `Workflow` and `bind_workflow_sink`, and already defines `_FakeSink` (around line 133), so the only import to add is `subtask`.
 
@@ -229,12 +229,12 @@ from sonata_engine import subtask
 
 Importing it from the package root rather than from `sonata_engine.workflow.reporting` is deliberate: it is what makes this test fail until Task 2's export exists.
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `uv run pytest tests/core/test_workflow.py -q`
 Expected: FAIL with `ImportError: cannot import name 'subtask' from 'sonata_engine'`.
 
-- [ ] **Step 3: Export it**
+- [x] **Step 3: Export it**
 
 In `src/sonata_engine/workflow/__init__.py`, add the import and the `__all__` entry:
 
@@ -257,12 +257,12 @@ __all__ = [
 
 In `src/sonata_engine/__init__.py`, add `subtask` to the existing `from sonata_engine.workflow import (...)` block and to `__all__`, keeping both in the order those lists already use.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `uv run pytest tests/core/test_workflow.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Run the whole suite and the gates**
+- [x] **Step 5: Run the whole suite and the gates**
 
 ```bash
 uv run pytest -q
@@ -271,7 +271,7 @@ uv run basedpyright
 ```
 Expected: all green, coverage gate satisfied. `tests/test_package_boundaries.py` must still pass — `subtask` adds no import outside `sonata_engine`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/sonata_engine/__init__.py src/sonata_engine/workflow/__init__.py tests/core/test_workflow.py
@@ -288,29 +288,30 @@ git commit -m "Export subtask and pin the compiled topology it must not change"
 **Interfaces:**
 - Consumes: the public `subtask` from Task 2. Produces nothing other tasks use.
 
-- [ ] **Step 1: Add the section**
+- [x] **Step 1: Add the section**
 
-README.md's top-level sections are `## v2 workflow API`, `## Resources`, `## Selecting a slice`, `## Journal and resume`, `## Development`. Insert the following between `## Resources` and `## Selecting a slice` — after resources, because the acquire of one is the most common place to want it; before slicing, because the paragraph explains what selection does and does not see.
+README.md's top-level sections are `## v2 workflow API`, `## Resources`, `## Selecting a slice`, `## Journal and resume`, `## Development`. Insert the following between `## Resources` and `## Selecting a slice` — after resources, because the acquire of one is the most common place to want it; before slicing, because the paragraph explains what selection does and does not see. It is a `##` section of its own, not a subsection of Resources: it is unrelated to resource acquisition.
 
 ```markdown
-### Reporting steps inside a task
+## Reporting steps inside a task
 
 A task that does several things can report them without becoming several
 units. `subtask` emits the same events a compiled unit does, nested under
 whichever task is running:
 
 ```python
-from sonata_engine import Task, TaskOutcome, subtask
+from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
 
 class BuildImages(Task[None]):
     title = "Build images"
 
-    def __init__(self, images: tuple[str, ...]) -> None:
+    def __init__(self, slug: str, images: tuple[str, ...]) -> None:
+        self._slug = slug
         self._images = images
 
-    def run(self, inputs):
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         for image in self._images:
-            with subtask(task_id=f"build-images/{image}", title=f"Build {image}"):
+            with subtask(task_id=f"{self._slug}/{image}", title=f"Build {image}"):
                 ...  # build it
         return TaskOutcome()
 ```
@@ -323,10 +324,18 @@ that step from its beginning.
 Pick `task_id` yourself and keep it unique within the run — a consumer keys
 child phases by it, so a repeat merges two steps into one. Do not imitate the
 compiler's `NNN.slug`: those ids are the engine's, and a task is not told its
-own.
+own. `slug` is a constructor argument, not a hardcoded literal, because two
+instances of the same task class (two `BuildImages` in one workflow) need
+something to tell their subtask ids apart.
+
+Open subtasks sequentially, on the thread running the task. The parent is
+resolved through a context shared as a fallback for worker threads (which
+start with none of their own); subtasks opened concurrently from worker
+threads — or one left open past its `with` block while another opens — nest
+under each other instead of under the unit, silently.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add README.md
@@ -337,7 +346,7 @@ git commit -m "Document subtask reporting"
 
 ## Self-review notes
 
-- **Spec coverage.** Design section → Tasks 1 and 2. "What does not change" → the compiled-topology test in Task 2. Testing section → all four engine cases are in Task 1 except topology invariance, which needs a real workflow and so sits in Task 2. The consumer-side TUI test named in the spec is downstream work in nanolab, not part of this plan.
+- **Spec coverage.** Design section → Tasks 1 and 2. "What does not change" → the compiled-topology test in Task 2. Testing section → all four engine cases are in Task 1 except topology invariance, which needs a real workflow and so sits in Task 2: both halves of that bullet, the plain unit-list comparison and `Selection(only=<enclosing step>)` keeping the step whole, are asserted there. The consumer-side TUI test named in the spec is downstream work in nanolab, not part of this plan.
 - **Deliberately not here.** Nothing teaches the journal about subtasks, and nothing lets `Selection` name one; both are stated non-goals. Workflow-as-a-task is untouched.
 - **Risk.** The only edits to existing code are one docstring and one `add_note` message; `subtask` itself adds no behaviour, it delegates to the code the runner already uses. Everything else is additive, which is why the topology test in Task 2 is the load-bearing one: it fails loudly if `subtask` ever starts affecting compilation.
-- **Left open deliberately: id collisions.** `task_id` is unique within a run only because the caller made it so. A task cannot qualify its ids with its own compiled ordinal — not knowing it is the point — so two instances of the same task class in one workflow would emit the same subtask ids, and the consumer's aggregator keys children by `task_id` (`_phase_by_task_id`) and would merge them into one phase. The engine could close this by prefixing `task_id` with the resolved parent inside `subtask`, which is two lines. It is not in this plan because it changes what `task_id` means to a caller, and no workflow has hit the collision yet. Revisit when one does.
+- **Left open deliberately: id collisions — wrong layer, not unhit.** `task_id` is unique within a run only because the caller made it so. A task cannot qualify its ids with its own compiled ordinal — not knowing it is the point — so two instances of the same task class in one workflow emit the same subtask ids. That is not an event-stream defect: the engine gives the two `task.started` events distinct `parent_task_id`s (`001.build-images` vs `002.build-images-again`), so nothing is lost on the wire. The merge is purely a property of a downstream consumer keying its phase map on `task_id` alone (`_phase_by_task_id`). The engine could still close it by prefixing `task_id` with the resolved parent inside `subtask`, but that changes the id shape every consumer already renders and logs, to fix something the consumer fixes by keying on `(parent_task_id, task_id)` instead. Deferral stands; revisit only if keying on the pair turns out to be insufficient, not merely unhit.
