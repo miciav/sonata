@@ -100,6 +100,38 @@ keeping a deployment while releasing the VM or cluster it still depends on.
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.
 
+### Reporting steps inside a task
+
+A task that does several things can report them without becoming several
+units. `subtask` emits the same events a compiled unit does, nested under
+whichever task is running:
+
+```python
+from sonata_engine import Task, TaskOutcome, subtask
+
+class BuildImages(Task[None]):
+    title = "Build images"
+
+    def __init__(self, images: tuple[str, ...]) -> None:
+        self._images = images
+
+    def run(self, inputs):
+        for image in self._images:
+            with subtask(task_id=f"build-images/{image}", title=f"Build {image}"):
+                ...  # build it
+        return TaskOutcome()
+```
+
+The step stays one compiled unit: one ordinal, one entry in the journal, one
+thing `Selection` can name. Subtasks exist in the event stream only, so a
+consumer's UI can show progress through a long step, and a resumed run restarts
+that step from its beginning.
+
+Pick `task_id` yourself and keep it unique within the run — a consumer keys
+child phases by it, so a repeat merges two steps into one. Do not imitate the
+compiler's `NNN.slug`: those ids are the engine's, and a task is not told its
+own.
+
 ## Selecting a slice
 
 `Selection` narrows a run to some of its consumer tasks, addressed by title slug.
