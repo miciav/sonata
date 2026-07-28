@@ -173,6 +173,25 @@ def test_injected_exact_value_verifier_enables_skip(tmp_path: Path) -> None:
     ]
 
 
+def test_reusable_flag_can_disable_skipping(tmp_path: Path) -> None:
+    class AlwaysRun(_ReusableTracker):
+        reusable = False
+
+    config = JournalConfig(path=tmp_path / "journal.jsonl")
+    task = AlwaysRun("Build")
+    _seed(
+        config.path,
+        "001.build",
+        "passed",
+        evidence=(Evidence("exact-value", "v1.2.3"),),
+        workflow_fingerprint=_fingerprint(task),
+    )
+
+    _run(task, config, resume=True, verifiers={"exact-value": lambda _e: True})
+
+    assert task.ran is True
+
+
 def test_changed_reusable_semantics_cannot_reuse_still_valid_evidence(
     tmp_path: Path,
 ) -> None:

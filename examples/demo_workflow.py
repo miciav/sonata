@@ -11,13 +11,13 @@ from typing import Generator
 
 from sonata_engine import (
     Resource,
+    Steps,
     Task,
     TaskInputs,
     TaskOutcome,
     Workflow,
     WorkflowEvent,
     bind_workflow_sink,
-    subtask,
     workflow_log,
 )
 
@@ -52,32 +52,29 @@ class PrepareSource(Task[str]):
         return TaskOutcome(value="/tmp/src")
 
 
-class BuildImages(Task[tuple[str, ...]]):
-    """One compiled unit whose several steps each report for themselves.
-
-    The subtask ids are this task's to choose. They must be unique within the
-    run and must not imitate the compiler's `NNN.slug`, so they are built from
-    `slug` — a constructor argument, because two instances of this class in one
-    workflow would otherwise emit the same ids.
+class BuildImage(Task[tuple[str, ...]]):
+    """One image build. The same class occupies every position in the chain:
+    the first instance starts the tuple; later instances extend it.
     """
 
-    title = "Build images"
-
-    def __init__(self, slug: str, images: tuple[str, ...]) -> None:
-        self._slug = slug
-        self._images = images
+    def __init__(self, image: str, *, first: bool = False) -> None:
+        self.title = f"Build {image}"
+        self._image = image
+        self._first = first
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[str, ...]]:
-        built: list[str] = []
-        for image in self._images:
-            with subtask(task_id=f"{self._slug}/build/{image}", title=f"Build {image}"):
-                workflow_log(f"docker build {image}")
-                built.append(f"registry.example/{image}:v1")
+        workflow_log(f"docker build {self._image}")
+        built = () if self._first else inputs.upstream()
+        return TaskOutcome(value=(*built, f"registry.example/{self._image}:v1"))
 
-        with subtask(task_id=f"{self._slug}/scan", title="Scan for vulnerabilities"):
-            workflow_log(f"scanning {len(built)} images")
 
-        return TaskOutcome(value=tuple(built))
+class ScanImages(Task[tuple[str, ...]]):
+    title = "Scan for vulnerabilities"
+
+    def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[str, ...]]:
+        built = inputs.upstream()
+        workflow_log(f"scanning {len(built)} images")
+        return TaskOutcome(value=built)
 
 
 def _start_builder_vm(inputs: TaskInputs) -> str:
@@ -106,10 +103,21 @@ def main() -> None:
 
     workflow = Workflow(workflow_id="demo-release")
     workflow.add(PrepareSource())
-    workflow.add(BuildImages("build-images", IMAGES))
+    workflow.add(
+        Steps(
+            title="Build images",
+            steps=(
+                *(
+                    BuildImage(image, first=index == 0)
+                    for index, image in enumerate(IMAGES)
+                ),
+                ScanImages(),
+            ),
+        )
+    )
     workflow.add(PushImages(), requires=(builder_vm,))
 
-    print("Running workflow (indented lines are subtasks):")
+    print("Running workflow (indented lines are steps):")
     with bind_workflow_sink(ConsoleSink()):
         result = workflow.run()
 

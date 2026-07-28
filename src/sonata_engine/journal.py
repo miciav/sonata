@@ -19,11 +19,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from sonata_engine.core.compiled import CompiledTask, CompiledWorkflow
 from sonata_engine.core.outcome import Evidence
-from sonata_engine.core.task import ReusableTask
+from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import (
     AmbiguousTaskStateError,
     CorruptJournalError,
@@ -298,11 +298,15 @@ class Journal:
 
     def decide(self, compiled_task: CompiledTask[object]) -> ResumeAction:
         """Resume decision for a consumer task (may raise `AmbiguousTaskStateError`)."""
-        task = compiled_task.task
+        return self.decide_task(compiled_task.task_id, compiled_task.task)
+
+    def decide_task(self, task_id: str, task: Task[Any]) -> ResumeAction:
+        """Resume decision for anything with a journal identity: a compiled unit
+        or one step of a composite."""
         return decide_resume(
-            self._states.get(compiled_task.task_id),
+            self._states.get(task_id),
             idempotent=task.idempotent,
-            reusable=isinstance(task, ReusableTask),
+            reusable=isinstance(task, ReusableTask) and task.reusable,
             verifiers=self.verifiers,
         )
 

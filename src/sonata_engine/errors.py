@@ -13,6 +13,10 @@ class ResourceUnavailableError(Exception):
     """Raised when a declared resource has not been acquired."""
 
 
+class NoUpstreamValueError(Exception):
+    """Raised when a step asks for an upstream value and none precedes it."""
+
+
 class ResourceDependencyCycleError(Exception):
     """Raised when resource lifecycle dependencies contain a cycle."""
 
@@ -59,4 +63,14 @@ class SelectionError(Exception):
     Covers a malformed selection (mutually exclusive fields, inverted range) and
     one that does not resolve to exactly one task per endpoint (unknown or
     ambiguous slug).
+    """
+
+
+class StepScopeUnavailableError(Exception):
+    """Raised when a `Steps` (or other step-scope consumer) runs without a scope.
+
+    A step scope is attached by the workflow runner to consumer and acquire
+    units. This error normally means the task was called directly rather than
+    through `Workflow.run()` -- add it to a `Workflow` instead of calling
+    `run()` on it yourself.
     """

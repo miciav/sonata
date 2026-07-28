@@ -7,6 +7,7 @@ from sonata_engine.core import (
     Resource,
     ReusableTask,
     Selection,
+    Steps,
     Task,
     TaskExecution,
     TaskInputs,
@@ -19,10 +20,12 @@ from sonata_engine.errors import (
     CorruptJournalError,
     InvalidTaskOutcomeError,
     MissingAcquireUnitError,
+    NoUpstreamValueError,
     ResourceDependencyCycleError,
     ResourceUnavailableError,
     ResumeConfigurationError,
     SelectionError,
+    StepScopeUnavailableError,
     UndeclaredResourceError,
     UnsupportedJournalSchemaError,
     WorkflowTopologyMismatchError,
@@ -42,7 +45,7 @@ from sonata_engine.workflow import (
     workflow_log,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "AmbiguousTaskStateError",
@@ -54,6 +57,7 @@ __all__ = [
     "InvalidTaskOutcomeError",
     "JournalConfig",
     "MissingAcquireUnitError",
+    "NoUpstreamValueError",
     "Resource",
     "ResourceDependencyCycleError",
     "ResourceUnavailableError",
@@ -62,6 +66,8 @@ __all__ = [
     "Selection",
     "SelectionError",
     "status",
+    "Steps",
+    "StepScopeUnavailableError",
     "subtask",
     "Task",
     "TaskInputs",

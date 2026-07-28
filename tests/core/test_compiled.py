@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 
 import pytest
 
@@ -9,6 +11,7 @@ from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
+from sonata_engine.core.workflow import Workflow
 from sonata_engine.errors import MissingAcquireUnitError
 
 
@@ -32,6 +35,70 @@ class _ReusableNoop(ReusableTask):
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome()
+
+
+def _legacy_single_task_fingerprint(
+    task: Task[object], task_id: str, payload: object
+) -> str:
+    """The pre-refactor canonical form, kept here as the compatibility oracle."""
+    topology = [
+        (
+            task_id,
+            "consumer",
+            f"{type(task).__module__}.{type(task).__qualname__}",
+            payload,
+            (),
+        )
+    ]
+    canonical = json.dumps(
+        ["w", topology],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def test_fingerprint_is_unchanged_for_a_task_contributing_no_payload() -> None:
+    task = _NoopTask("Plain")
+    workflow = Workflow(workflow_id="w")
+    workflow.add(task)
+
+    assert task._fingerprint_payload() is None
+    assert workflow.compile().fingerprint == _legacy_single_task_fingerprint(
+        task, "001.plain", None
+    )
+
+
+def test_reusable_task_still_contributes_its_reuse_key() -> None:
+    task = _ReusableNoop("key-1")
+    workflow = Workflow(workflow_id="w")
+    workflow.add(task)
+
+    assert task._fingerprint_payload() == "key-1"
+    assert workflow.compile().fingerprint == _legacy_single_task_fingerprint(
+        task, "001.build", "key-1"
+    )
+
+
+def test_a_payload_change_changes_the_fingerprint() -> None:
+    class Payloaded(Task[None]):
+        title = "Payloaded"
+
+        def __init__(self, payload: object) -> None:
+            self._payload = payload
+
+        def _fingerprint_payload(self) -> object:
+            return self._payload
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            return TaskOutcome()
+
+    def fingerprint_for(payload: object) -> str:
+        workflow = Workflow(workflow_id="w")
+        workflow.add(Payloaded(payload))
+        return workflow.compile().fingerprint
+
+    assert fingerprint_for(["a"]) != fingerprint_for(["b"])
 
 
 def test_compiled_task_defaults_to_no_required_resources() -> None:

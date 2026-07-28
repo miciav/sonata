@@ -102,9 +102,11 @@ ambiguous and resume refuses to retry it automatically.
 
 ## Reporting steps inside a task
 
-A task that does several things can report them without becoming several
-units. `subtask` emits the same events a compiled unit does, nested under
-whichever task is running:
+A hand-written task can report progress without turning that work into
+journalled steps. `subtask` emits the same events a compiled unit does, nested
+under whichever task is running. If the reported operations are the task's
+actual sequential steps, prefer `Steps` below: it names and journals them for
+you.
 
 ```python
 from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
@@ -156,19 +158,50 @@ own. `slug` is a constructor argument, not a hardcoded literal, because two
 instances of the same task class (two `PublishImages` in one workflow) need
 something to tell their subtask ids apart.
 
-The snippet above is a sketch. For a version that runs — with the sink the
-events need somewhere to go, since `subtask` is a silent no-op without one —
-see `examples/demo_workflow.py`:
-
-```
-uv run python examples/demo_workflow.py
-```
+The snippet above is a sketch; focused executable examples live in
+[`tests/workflow/test_reporting.py`](tests/workflow/test_reporting.py).
+`subtask` is a silent no-op unless a sink is bound.
 
 Open subtasks sequentially, on the thread running the task. The parent is
 resolved through a context shared as a fallback for worker threads (which
 start with none of their own); subtasks opened concurrently from worker
 threads — or one left open past its `with` block while another opens — nest
 under each other instead of under the unit, silently.
+
+## Assembling a task from steps
+
+`Steps` is the assembly counterpart to `subtask`: use it when the operations
+are the task, rather than progress reported by a hand-written `run()`. A task
+made of steps does not need a `run()` of its own. `Steps` takes them and runs
+them in order, feeding each the value the one before produced:
+
+```python
+from sonata_engine import Steps
+
+workflow.add(
+    Steps(
+        title="Deploy the chart",
+        steps=(HelmInstall(chart), WaitRollout(), ResolveEndpoint()),
+    )
+)
+```
+
+Each step is an ordinary `Task`, so anything already written serves as one, and
+a step that needs no input simply never calls `inputs.upstream()`. The engine
+names the steps under the compiled unit — `001.deploy-the-chart/install-chart` —
+so you choose titles and nothing else.
+
+The composite stays one compiled unit: one ordinal, one thing `Selection` can
+name, one fate. But its steps are journalled individually, so a resumed run
+skips the ones already finished. What may be skipped is decided exactly as for a
+compiled unit: a `ReusableTask` whose evidence still verifies. Its only legal
+value is `None`, which the engine reconstructs when the step is skipped — build
+five images, have the fifth fail, resume, and only the fifth runs again.
+
+`WorkflowResult` contains one outcome for the composite, whose value is the
+last step's value. It does not expose each step's `TaskOutcome` or evidence;
+child lifecycles remain visible in the event stream, and evidence is retained
+in the journal when one is configured.
 
 ## Selecting a slice
 
