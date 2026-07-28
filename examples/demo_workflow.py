@@ -115,7 +115,7 @@ def main() -> None:
     )
     workflow.add(PushImages(), requires=(builder_vm,))
 
-    print("Running workflow (indented lines are subtasks):")
+    print("Running workflow (indented lines are steps):")
     with bind_workflow_sink(ConsoleSink()):
         result = workflow.run()
 
