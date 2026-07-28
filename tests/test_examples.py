@@ -28,15 +28,15 @@ def test_demo_workflow_example_runs_successfully() -> None:
     assert "Compiled task IDs and outcomes" in _run_demo().stdout
 
 
-def test_demo_workflow_example_reports_subtasks_without_compiling_them() -> None:
-    """The demo is where the subtask contract is visible end to end: the steps
+def test_demo_workflow_example_reports_steps_without_compiling_them() -> None:
+    """The demo is where the composite contract is visible end to end: the steps
     appear in the event stream, and the compiled unit list is unaffected."""
     stdout = _run_demo().stdout
     events, _, compiled = stdout.partition("Compiled task IDs and outcomes:")
 
-    assert "build-images/build/control-plane" in events
-    assert "build-images/scan" in events
-    assert "build-images/" not in compiled, (
-        "a subtask id reached the compiled unit list:\n" + compiled
+    assert "002.build-images/build-control-plane" in events
+    assert "002.build-images/scan-for-vulnerabilities" in events
+    assert "002.build-images/" not in compiled, (
+        "a step id reached the compiled unit list:\n" + compiled
     )
     assert "002.build-images" in compiled

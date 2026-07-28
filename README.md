@@ -170,6 +170,34 @@ start with none of their own); subtasks opened concurrently from worker
 threads — or one left open past its `with` block while another opens — nest
 under each other instead of under the unit, silently.
 
+## Assembling a task from steps
+
+A task made of steps does not need a `run()` of its own. `Steps` takes them and
+runs them in order, feeding each the value the one before produced:
+
+```python
+from sonata_engine import Steps
+
+workflow.add(
+    Steps(
+        title="Deploy the chart",
+        steps=(HelmInstall(chart), WaitRollout(), ResolveEndpoint()),
+    )
+)
+```
+
+Each step is an ordinary `Task`, so anything already written serves as one, and
+a step that needs no input simply never calls `inputs.upstream()`. The engine
+names the steps under the compiled unit — `001.deploy-the-chart/install-chart` —
+so you choose titles and nothing else.
+
+The composite stays one compiled unit: one ordinal, one thing `Selection` can
+name, one fate. But its steps are journalled individually, so a resumed run
+skips the ones already finished. What may be skipped is decided exactly as for a
+compiled unit: a `ReusableTask` whose evidence still verifies. Its only legal
+value is `None`, which the engine reconstructs when the step is skipped — build
+five images, have the fifth fail, resume, and only the fifth runs again.
+
 ## Selecting a slice
 
 `Selection` narrows a run to some of its consumer tasks, addressed by title slug.
