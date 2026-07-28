@@ -28,16 +28,24 @@
 **Files:**
 - Modify: `src/sonata_engine/errors.py`
 - Modify: `src/sonata_engine/core/inputs.py`
-- Test: `tests/core/test_inputs.py`
+- Modify: `src/sonata_engine/__init__.py`
+- Create: `tests/core/test_inputs.py`
 
 **Interfaces:**
-- Produces: `NoUpstreamValueError`; `TaskInputs.upstream() -> Any`; the module-private sentinel `_NO_UPSTREAM` and the defaulted field `TaskInputs._upstream`.
+- Produces: `NoUpstreamValueError`, exported from `sonata_engine`; `TaskInputs.upstream() -> Any`; the module-private sentinel `_NO_UPSTREAM` and the defaulted field `TaskInputs._upstream`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/core/test_inputs.py`. Add `from dataclasses import replace` and `from sonata_engine.errors import NoUpstreamValueError` to that file's imports.
+Create `tests/core/test_inputs.py`:
 
 ```python
+from dataclasses import replace
+
+import pytest
+
+from sonata_engine import NoUpstreamValueError, TaskInputs
+
+
 def test_upstream_raises_when_no_step_produced_a_value() -> None:
     with pytest.raises(NoUpstreamValueError, match="no upstream value"):
         TaskInputs.empty().upstream()
@@ -56,8 +64,9 @@ def test_upstream_returns_none_as_a_legitimate_value() -> None:
 
 def test_existing_construction_paths_still_work() -> None:
     """`empty()` and the two-argument constructor predate the new field."""
-    assert TaskInputs.empty().upstream_is_absent()
-    assert TaskInputs({}, frozenset()).upstream_is_absent()
+    for inputs in (TaskInputs.empty(), TaskInputs({}, frozenset())):
+        with pytest.raises(NoUpstreamValueError):
+            inputs.upstream()
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -65,7 +74,7 @@ def test_existing_construction_paths_still_work() -> None:
 Run: `uv run pytest tests/core/test_inputs.py -q`
 Expected: FAIL with `ImportError: cannot import name 'NoUpstreamValueError'`.
 
-- [ ] **Step 3: Add the error**
+- [ ] **Step 3: Add and export the error**
 
 In `src/sonata_engine/errors.py`, add after `ResourceUnavailableError` (it has the same shape — a task asking for something that is not there):
 
@@ -74,23 +83,18 @@ class NoUpstreamValueError(Exception):
     """Raised when a step asks for an upstream value and none precedes it."""
 ```
 
+In `src/sonata_engine/__init__.py`, import `NoUpstreamValueError` from
+`sonata_engine.errors` and add it to `__all__` between
+`"MissingAcquireUnitError"` and `"Resource"`, following the existing
+case-insensitive ordering.
+
 - [ ] **Step 4: Add the field and the accessor**
 
 In `src/sonata_engine/core/inputs.py`, import the new error alongside the existing two, then add the sentinel above `TaskInputs`:
 
 ```python
-class _NoUpstream:
-    """Absence of an upstream value.
-
-    Distinct from `None`, which is a value a step may legitimately return and
-    which a skipped `ReusableTask` step contributes.
-    """
-
-    def __repr__(self) -> str:
-        return "<no upstream>"
-
-
-_NO_UPSTREAM: Any = _NoUpstream()
+# Distinct from `None`, which is a legitimate and reconstructible step value.
+_NO_UPSTREAM: Any = object()
 ```
 
 Add the field to `TaskInputs`, after the two existing ones so the current positional constructor keeps working:
@@ -99,7 +103,7 @@ Add the field to `TaskInputs`, after the two existing ones so the current positi
     _upstream: Any = _NO_UPSTREAM
 ```
 
-Then the two accessors:
+Then add the accessor:
 
 ```python
     def upstream(self) -> Any:
@@ -111,9 +115,6 @@ Then the two accessors:
         if self._upstream is _NO_UPSTREAM:
             raise NoUpstreamValueError("no upstream value: nothing ran before this step")
         return self._upstream
-
-    def upstream_is_absent(self) -> bool:
-        return self._upstream is _NO_UPSTREAM
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
@@ -125,7 +126,7 @@ Expected: PASS.
 
 ```bash
 uv run pytest && uv run ruff check . && uv run basedpyright
-git add src/sonata_engine/errors.py src/sonata_engine/core/inputs.py tests/core/test_inputs.py
+git add src/sonata_engine/errors.py src/sonata_engine/core/inputs.py src/sonata_engine/__init__.py tests/core/test_inputs.py
 git commit -m "Let a task read the value the step before it produced"
 ```
 
@@ -141,39 +142,56 @@ git commit -m "Let a task read the value the step before it produced"
 **Interfaces:**
 - Produces: `Task._fingerprint_payload() -> object`, defaulting to `None`; `ReusableTask._fingerprint_payload()` returning `self.reuse_key`. `CompiledWorkflow.fingerprint` calls it instead of testing `isinstance(..., ReusableTask)`.
 
-This task is behaviour-preserving. Its test proves the fingerprint of existing workflows does not move, and that a task contributing a payload changes it.
+This task is behaviour-preserving. Its test reconstructs the current canonical
+single-task fingerprint independently, so it detects any accidental movement of
+existing plain or reusable workflow fingerprints.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/core/test_compiled.py`. It already imports `Task`, `TaskInputs`, `TaskOutcome`, `Workflow`; add `ReusableTask` if it is not there.
+Add `hashlib` and `json` to `tests/core/test_compiled.py`, then add:
 
 ```python
+def _legacy_single_task_fingerprint(
+    task: Task[object], task_id: str, payload: object
+) -> str:
+    """The pre-refactor canonical form, kept here as the compatibility oracle."""
+    topology = [
+        (
+            task_id,
+            "consumer",
+            f"{type(task).__module__}.{type(task).__qualname__}",
+            payload,
+            (),
+        )
+    ]
+    canonical = json.dumps(
+        ["w", topology],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
 def test_fingerprint_is_unchanged_for_a_task_contributing_no_payload() -> None:
-    """Pin the existing value: plain tasks must not have their resume invalidated."""
-
-    class Plain(Task[None]):
-        title = "Plain"
-
-        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
-            return TaskOutcome()
-
+    task = _NoopTask("Plain")
     workflow = Workflow(workflow_id="w")
-    workflow.add(Plain())
-    before = workflow.compile().fingerprint
+    workflow.add(task)
 
-    assert Plain()._fingerprint_payload() is None
-    assert workflow.compile().fingerprint == before
+    assert task._fingerprint_payload() is None
+    assert workflow.compile().fingerprint == _legacy_single_task_fingerprint(
+        task, "001.plain", None
+    )
 
 
 def test_reusable_task_still_contributes_its_reuse_key() -> None:
-    class Reusable(ReusableTask):
-        title = "Reusable"
-        reuse_key = "key-1"
+    task = _ReusableNoop("key-1")
+    workflow = Workflow(workflow_id="w")
+    workflow.add(task)
 
-        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
-            return TaskOutcome()
-
-    assert Reusable()._fingerprint_payload() == "key-1"
+    assert task._fingerprint_payload() == "key-1"
+    assert workflow.compile().fingerprint == _legacy_single_task_fingerprint(
+        task, "001.build", "key-1"
+    )
 
 
 def test_a_payload_change_changes_the_fingerprint() -> None:
@@ -200,7 +218,8 @@ def test_a_payload_change_changes_the_fingerprint() -> None:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/core/test_compiled.py -q`
-Expected: FAIL with `AttributeError: 'Plain' object has no attribute '_fingerprint_payload'`.
+Expected: FAIL with
+`AttributeError: '_NoopTask' object has no attribute '_fingerprint_payload'`.
 
 - [ ] **Step 3: Add the default and the reusable override**
 
@@ -220,6 +239,7 @@ In `src/sonata_engine/core/task.py`, add to `Task` (not abstract — the default
 Add to `ReusableTask`, replacing what `compiled.py` used to reach in for:
 
 ```python
+    @override
     def _fingerprint_payload(self) -> object:
         return self.reuse_key
 ```
@@ -260,56 +280,25 @@ git commit -m "Let a task say what it contributes to the resume fingerprint"
 **Files:**
 - Modify: `src/sonata_engine/journal.py:299-307`
 - Modify: `src/sonata_engine/core/workflow.py:234-295`
-- Test: `tests/core/test_workflow.py`
 
 **Interfaces:**
 - Produces: `Journal.decide_task(task_id: str, task: Task[Any]) -> ResumeAction`; the module-level `_execute_recorded(...) -> TaskExecution` in `core/workflow.py`, whose signature Task 4 calls.
 
 Pure refactor. `_run_unit` keeps its behaviour exactly; the existing suite is the proof.
 
-**One subtlety that must survive:** `_run_unit` builds its inputs *inside* `_task_lifecycle` (line 268), so a failure while resolving resources is reported as a task failure. The routine therefore takes a **callable** that produces inputs, called inside the lifecycle — not an already-built `TaskInputs`.
+`_run_unit` currently builds inputs inside `_task_lifecycle`. Keep that ordering
+by passing a callable to the extracted routine. No new characterization test is
+needed: the proposed undeclared-resource test would fail inside `task.run()`,
+not while building inputs, and would not prove this ordering.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Establish the refactor baseline**
 
-Add to `tests/core/test_workflow.py`:
+Run: `uv run pytest -q`
+Expected: PASS, 185 tests: the branch baseline of 178 plus the four tests from
+Task 1 and the three from Task 2. If the count differs, stop and explain it
+before changing the execution path.
 
-```python
-def test_resource_resolution_failure_is_reported_as_a_task_failure() -> None:
-    """Inputs are built inside the lifecycle, so a resolution failure emits
-    task.failed rather than escaping unreported. Pinned because the shared
-    execution routine must keep it."""
-    undeclared = Resource(title="Undeclared", acquire=lambda inputs: "v")
-
-    class Peeker(Task[None]):
-        title = "Peeker"
-
-        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
-            inputs.resource(undeclared)
-            return TaskOutcome()
-
-    workflow = Workflow(workflow_id="w")
-    workflow.add(Peeker())
-
-    sink = _FakeSink()
-    with bind_workflow_sink(sink), pytest.raises(UndeclaredResourceError):
-        workflow.run()
-
-    assert [event.kind for event in sink.events] == ["task.started", "task.failed"]
-```
-
-Add `Resource` and `UndeclaredResourceError` to that file's imports if absent.
-
-- [ ] **Step 2: Run it to verify it passes already**
-
-Run: `uv run pytest tests/core/test_workflow.py -q`
-Expected: PASS. This one is a characterization test — it passes before the refactor and must still pass after. Commit it now so the refactor has a net under it.
-
-```bash
-git add tests/core/test_workflow.py
-git commit -m "Pin that resource resolution failures are reported as task failures"
-```
-
-- [ ] **Step 3: Generalize the journal's resume decision**
+- [ ] **Step 2: Generalize the journal's resume decision**
 
 In `src/sonata_engine/journal.py`, replace the body of `decide` and add the general form beside it:
 
@@ -331,7 +320,7 @@ In `src/sonata_engine/journal.py`, replace the body of `decide` and add the gene
 
 Add `Task` and `Any` to that module's imports if absent.
 
-- [ ] **Step 4: Extract the routine**
+- [ ] **Step 3: Extract the routine**
 
 In `src/sonata_engine/core/workflow.py`, add this module-level function above the `Workflow` class:
 
@@ -419,12 +408,12 @@ Then replace the body of `_run_unit` (keep its signature and docstring) with:
 
 `self._next_attempt` may now be unused — check with `grep -n _next_attempt src/sonata_engine/core/workflow.py`; `_release` still calls it, so expect it to stay.
 
-- [ ] **Step 5: Run the whole suite**
+- [ ] **Step 4: Run the whole suite**
 
 Run: `uv run pytest -q`
 Expected: PASS, unchanged count. Every journal, resume and failure test passing untouched is the proof this refactor changed nothing.
 
-- [ ] **Step 6: Run the gates and commit**
+- [ ] **Step 5: Run the gates and commit**
 
 ```bash
 uv run pytest && uv run ruff check . && uv run basedpyright
@@ -458,7 +447,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Generator
 
-from sonata_engine import Task, TaskInputs, TaskOutcome, Workflow
+import pytest
+
+from sonata_engine import Resource, Task, TaskInputs, TaskOutcome, Workflow
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
 
@@ -528,12 +519,17 @@ def test_the_scope_names_a_step_under_the_compiled_unit_id() -> None:
 
 def test_the_step_receives_the_upstream_and_the_composite_resources() -> None:
     seen: list[object] = []
+    resource = Resource[str](
+        title="Acquire token",
+        acquire=lambda _inputs: "token-42",
+        release=lambda _inputs, _value: None,
+    )
 
     class Reader(Task[None]):
         title = "Reader"
 
         def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
-            seen.append(inputs.upstream())
+            seen.append((inputs.upstream(), inputs.resource(resource)))
             return TaskOutcome()
 
     class Runner(Task[None]):
@@ -546,10 +542,10 @@ def test_the_step_receives_the_upstream_and_the_composite_resources() -> None:
             return TaskOutcome()
 
     workflow = Workflow(workflow_id="w")
-    workflow.add(Runner())
+    workflow.add(Runner(), requires=(resource,))
     workflow.run()
 
-    assert seen == ["rel-42"]
+    assert seen == [("rel-42", "token-42")]
 
 
 def test_a_step_gets_its_own_nested_scope() -> None:
@@ -576,9 +572,45 @@ def test_a_step_gets_its_own_nested_scope() -> None:
 
     workflow = Workflow(workflow_id="w")
     workflow.add(Outer())
-    workflow.run()
+
+    sink = _FakeSink()
+    with bind_workflow_sink(sink):
+        workflow.run()
 
     assert ids == ["001.outer/inner/echo"]
+    echo = next(
+        event
+        for event in sink.events
+        if event.kind == "task.started" and event.task_id == "001.outer/inner/echo"
+    )
+    assert echo.parent_task_id == "001.outer/inner"
+
+
+def test_a_failing_step_emits_child_and_parent_failures() -> None:
+    class Boom(Task[None]):
+        title = "Boom"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            raise RuntimeError("boom")
+
+    class Outer(Task[None]):
+        title = "Outer"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            scope = inputs._step_scope
+            assert scope is not None
+            scope.run_step(Boom(), "boom", upstream=None)
+            return TaskOutcome()
+
+    workflow = Workflow(workflow_id="w")
+    workflow.add(Outer())
+    sink = _FakeSink()
+
+    with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom"):
+        workflow.run()
+
+    failed = [event.task_id for event in sink.events if event.kind == "task.failed"]
+    assert failed == ["001.outer/boom", "001.outer"]
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -616,16 +648,19 @@ class StepScope(Protocol):
 
 - [ ] **Step 4: Carry it on `TaskInputs`**
 
-In `src/sonata_engine/core/inputs.py`, add to the `TYPE_CHECKING` block:
+In `src/sonata_engine/core/inputs.py`, change the dataclasses import to
+`from dataclasses import dataclass, field`, then add to the `TYPE_CHECKING`
+block:
 
 ```python
     from sonata_engine.core.step_scope import StepScope
 ```
 
-and add the field after `_upstream`:
+and add the field after `_upstream`. The scope is engine plumbing, so it must
+not affect `TaskInputs` equality or appear in its representation:
 
 ```python
-    _step_scope: StepScope | None = None
+    _step_scope: StepScope | None = field(default=None, compare=False, repr=False)
 ```
 
 `Steps` reads this attribute directly. It is underscore-private and stays that way: it is engine plumbing, not something a hand-written task should reach for.
@@ -688,7 +723,7 @@ Then attach a scope to every unit's inputs, by replacing the `make_inputs` body 
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/core/test_step_scope.py -q`
-Expected: PASS, all four.
+Expected: PASS, all five.
 
 - [ ] **Step 7: Run the gates and commit**
 
@@ -868,10 +903,36 @@ def test_the_fingerprint_payload_covers_the_steps() -> None:
     def payload(*steps: Task[object]) -> object:
         return Steps(title="Deploy", steps=tuple(steps))._fingerprint_payload()
 
+    class OtherProduce(Task[str]):
+        title = "Install"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
+            return TaskOutcome(value="1")
+
+    class Reusable(ReusableTask):
+        title = "Build"
+
+        def __init__(self, key: str) -> None:
+            self._key = key
+
+        @property
+        def reuse_key(self) -> str:
+            return self._key
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            return TaskOutcome()
+
     a = _Produce("Install", "1")
     b = _Produce("Resolve", "2")
     assert payload(a, b) != payload(b, a)
     assert payload(a) != payload(a, b)
+    assert payload(_Produce("Install", "1")) != payload(_Produce("Resolve", "1"))
+    assert payload(_Produce("Install", "1")) != payload(OtherProduce())
+    assert payload(Reusable("key-1")) != payload(Reusable("key-2"))
+
+    nested_a = Steps(title="Inner", steps=(_Produce("Install", "1"),))
+    nested_b = Steps(title="Inner", steps=(_Produce("Resolve", "1"),))
+    assert payload(nested_a) != payload(nested_b)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -903,8 +964,8 @@ class Steps(Task[Any]):
 
     Steps are journalled individually, so a resumed composite skips the steps it
     already finished. What may be skipped is decided exactly as it is for a
-    compiled unit — a `ReusableTask` whose evidence still verifies — and such a
-    step returns no value, so nothing after it can miss what was skipped.
+    compiled unit — a `ReusableTask` whose evidence still verifies. Its only
+    legal value is None, which is reconstructed when the step is skipped.
 
     `idempotent` is always `True`. It says this coordinator is safe to re-enter
     after a failed attempt, and says nothing about the steps: each carries its
@@ -937,14 +998,14 @@ class Steps(Task[Any]):
 
     @override
     def _fingerprint_payload(self) -> object:
-        return [
-            [
+        return tuple(
+            (
                 slug,
                 f"{type(step).__module__}.{type(step).__qualname__}",
                 step._fingerprint_payload(),
-            ]
+            )
             for slug, step in zip(self._slugs, self._steps)
-        ]
+        )
 
     @override
     def run(self, inputs: TaskInputs) -> TaskOutcome[Any]:
@@ -971,12 +1032,15 @@ Note `upstream` starts from `inputs._upstream`, not from `_NO_UPSTREAM`: a top-l
 
 In `src/sonata_engine/core/__init__.py`, add `Steps` to the imports and `__all__` in the position the file's existing order dictates.
 
-In `src/sonata_engine/__init__.py`, add `Steps` to the `from sonata_engine.core import (...)` block and to `__all__`, inserting it in its case-insensitive alphabetical slot (between `"SelectionError"` and `"status"`) without reordering anything else.
+In `src/sonata_engine/__init__.py`, add `Steps` to the
+`from sonata_engine.core import (...)` block and to `__all__`, inserting it
+between `"status"` and `"subtask"` in the existing case-insensitive order
+without reordering anything else.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/core/test_steps.py -q`
-Expected: PASS, all fourteen.
+Expected: PASS.
 
 - [ ] **Step 6: Run the gates and commit**
 
@@ -1001,7 +1065,7 @@ git commit -m "Assemble a task from steps instead of writing its loop"
 
 This is the payoff task: it proves the thing the journal work exists for.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the integration tests**
 
 Create `tests/core/test_steps_resume.py`. Look at how the existing journal tests build a `JournalConfig` (`grep -rn "JournalConfig(" tests/`) and follow that pattern for the temporary path.
 
@@ -1021,12 +1085,13 @@ from sonata_engine import (
     Workflow,
 )
 from sonata_engine.errors import AmbiguousTaskStateError, WorkflowTopologyMismatchError
+from sonata_engine.journal import Journal
 
 ALWAYS = {"always": lambda _e: True}
 
 
 class _Reusable(ReusableTask):
-    """Skippable on resume: reusable, and returns no value, as the engine requires."""
+    """Verified evidence lets resume skip it and reconstruct its value as None."""
 
     def __init__(self, title: str, ran: list[str]) -> None:
         self.title = title
@@ -1041,26 +1106,36 @@ class _Reusable(ReusableTask):
         return TaskOutcome(evidence=(Evidence("always", self.title),))
 
 
-class _FailsOnce(Task[str]):
-    title = "Fails once"
+class _RetryableBuild(ReusableTask):
+    title = "Build app"
     idempotent = True
+    reuse_key = "build-app-v1"
 
-    def __init__(self, ran: list[str]) -> None:
+    def __init__(self, ran: list[str], attempts: list[int]) -> None:
         self._ran = ran
+        self._attempts = attempts
 
-    def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
+    def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+        # On the resumed run the preceding reusable step is skipped. Its only
+        # legal value, None, must still be reconstructed as this step's upstream.
+        assert inputs.upstream() is None
         self._ran.append(self.title)
-        if len(self._ran) == 1 or self._ran.count(self.title) == 1:
+        self._attempts[0] += 1
+        if self._attempts[0] == 1:
             raise RuntimeError("boom")
-        return TaskOutcome(value="done")
+        return TaskOutcome(evidence=(Evidence("always", self.title),))
 
 
-def _workflow(ran: list[str]) -> Workflow:
+def _workflow(ran: list[str], attempts: list[int]) -> Workflow:
     workflow = Workflow(workflow_id="w")
     workflow.add(
         Steps(
             title="Publish",
-            steps=(_Reusable("Build cp", ran), _Reusable("Build fn", ran), _FailsOnce(ran)),
+            steps=(
+                _Reusable("Build cp", ran),
+                _Reusable("Build fn", ran),
+                _RetryableBuild(ran, attempts),
+            ),
         )
     )
     return workflow
@@ -1069,30 +1144,32 @@ def _workflow(ran: list[str]) -> Workflow:
 def test_resume_skips_finished_reusable_steps_and_retries_the_failed_one(
     tmp_path,
 ) -> None:
-    """The point of the journal work: the fifth build fails, you resume, the
+    """The point of the journal work: the last build fails, you resume, the
     earlier builds do not run again."""
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     ran: list[str] = []
+    attempts = [0]
 
     with pytest.raises(RuntimeError, match="boom"):
-        _workflow(ran).run(journal=config, verifiers=ALWAYS)
-    assert ran == ["Build cp", "Build fn", "Fails once"]
+        _workflow(ran, attempts).run(journal=config, verifiers=ALWAYS)
+    assert ran == ["Build cp", "Build fn", "Build app"]
 
     ran.clear()
-    _workflow(ran).run(journal=config, resume=True, verifiers=ALWAYS)
-    assert ran == ["Fails once"]
+    _workflow(ran, attempts).run(journal=config, resume=True, verifiers=ALWAYS)
+    assert ran == ["Build app"]
+    assert attempts == [2]
 
 
 def test_resume_false_runs_every_step_even_with_a_journal(tmp_path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     ran: list[str] = []
-    with pytest.raises(RuntimeError):
-        _workflow(ran).run(journal=config, verifiers=ALWAYS)
+    attempts = [1]  # the retryable build succeeds on every run in this test
+    _workflow(ran, attempts).run(journal=config, verifiers=ALWAYS)
+    assert ran == ["Build cp", "Build fn", "Build app"]
 
     ran.clear()
-    with pytest.raises(RuntimeError):
-        _workflow(ran).run(journal=config, verifiers=ALWAYS)
-    assert ran == ["Build cp", "Build fn", "Fails once"]
+    _workflow(ran, attempts).run(journal=config, verifiers=ALWAYS)
+    assert ran == ["Build cp", "Build fn", "Build app"]
 
 
 def test_an_interrupted_non_idempotent_step_refuses_to_resume(tmp_path) -> None:
@@ -1103,15 +1180,19 @@ def test_an_interrupted_non_idempotent_step_refuses_to_resume(tmp_path) -> None:
         idempotent = False
 
         def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
-            raise RuntimeError("boom")
+            raise AssertionError("an interrupted non-idempotent step must not run")
 
     def build() -> Workflow:
         workflow = Workflow(workflow_id="w")
         workflow.add(Steps(title="Publish", steps=(Fragile(),)))
         return workflow
 
-    with pytest.raises(RuntimeError, match="boom"):
-        build().run(journal=config, verifiers=ALWAYS)
+    # Simulate a process stopping after the durable child `started` record but
+    # before any terminal record. The enclosing unit remains `pending`, so the
+    # resume reaches the child decision.
+    seeded = build()
+    Journal(config, seeded.compile()).record_started("001.publish/fragile", 1)
+
     with pytest.raises(AmbiguousTaskStateError):
         build().run(journal=config, resume=True, verifiers=ALWAYS)
 
@@ -1119,14 +1200,19 @@ def test_an_interrupted_non_idempotent_step_refuses_to_resume(tmp_path) -> None:
 def test_changing_the_step_list_invalidates_resume(tmp_path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     ran: list[str] = []
+    attempts = [0]
     with pytest.raises(RuntimeError):
-        _workflow(ran).run(journal=config, verifiers=ALWAYS)
+        _workflow(ran, attempts).run(journal=config, verifiers=ALWAYS)
 
     changed = Workflow(workflow_id="w")
     changed.add(
         Steps(
             title="Publish",
-            steps=(_Reusable("Build fn", ran), _Reusable("Build cp", ran), _FailsOnce(ran)),
+            steps=(
+                _Reusable("Build fn", ran),
+                _Reusable("Build cp", ran),
+                _RetryableBuild(ran, attempts),
+            ),
         )
     )
     with pytest.raises(WorkflowTopologyMismatchError):
@@ -1135,14 +1221,20 @@ def test_changing_the_step_list_invalidates_resume(tmp_path) -> None:
 
 `Evidence` is `(kind, reference, digest=None)` and a verifier is `Callable[[Evidence], bool]` keyed by evidence kind — see `tests/test_resume.py:167` for the shape this mirrors.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 2: Run the integration tests**
 
 Run: `uv run pytest tests/core/test_steps_resume.py -q`
-Expected: FAIL. Read each failure before fixing: these tests encode the whole point of the feature, so a failure here is more likely a real defect than a wrong test. If `_FailsOnce`'s "fail the first time only" logic misbehaves across two workflow instances, replace it with a module-level counter — the intent is one failure then success.
+Expected: PASS, all four. Tasks 1-5 already implement the behavior under test;
+this task is their integration proof. The persistent `attempts` list makes
+“fail once, then pass” deterministic across the two workflow instances; do not
+couple retry state to the `ran` list that the assertions clear.
 
-- [ ] **Step 3: Make them pass**
+- [ ] **Step 3: Investigate any integration failure**
 
-No new production code should be needed: Tasks 1-5 implement all of this. If something is missing, fix it in the module that owns it rather than working around it in the test, and note what was missing in your report.
+No new production code should be needed: Tasks 1-5 implement all of this. If a
+test fails, first verify the plan was followed in order. If behavior is really
+missing, fix it in the module that owns it rather than working around it in the
+test, and note what was missing in your report.
 
 - [ ] **Step 4: Document it in the README**
 
@@ -1173,9 +1265,9 @@ so you choose titles and nothing else.
 The composite stays one compiled unit: one ordinal, one thing `Selection` can
 name, one fate. But its steps are journalled individually, so a resumed run
 skips the ones already finished. What may be skipped is decided exactly as for a
-compiled unit: a `ReusableTask` whose evidence still verifies. Such a step
-returns no value, so nothing after it can miss what was skipped — build five
-images, have the fifth fail, resume, and only the fifth runs again.
+compiled unit: a `ReusableTask` whose evidence still verifies. Its only legal
+value is `None`, which the engine reconstructs when the step is skipped — build
+five images, have the fifth fail, resume, and only the fifth runs again.
 ```
 
 - [ ] **Step 5: Show it in the demo**
@@ -1192,7 +1284,10 @@ class BuildImage(Task[tuple[str, ...]]):
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[str, ...]]:
         workflow_log(f"docker build {self._image}")
-        built = () if inputs.upstream_is_absent() else inputs.upstream()
+        try:
+            built = inputs.upstream()
+        except NoUpstreamValueError:
+            built = ()
         return TaskOutcome(value=(*built, f"registry.example/{self._image}:v1"))
 
 
@@ -1205,7 +1300,10 @@ class ScanImages(Task[tuple[str, ...]]):
         return TaskOutcome(value=built)
 ```
 
-`BuildImage` is where `upstream_is_absent()` earns its place: the first build has nothing before it and starts the tuple, every later one extends what it received.
+Import `NoUpstreamValueError` and `Steps` from `sonata_engine`, and drop
+`subtask`. The same `BuildImage` class can occupy either position: the first
+instance catches the explicit “no predecessor” error and starts the tuple;
+later instances extend the upstream tuple.
 
 In `main()`, replace the `workflow.add(BuildImages(...))` line with:
 
@@ -1218,14 +1316,12 @@ In `main()`, replace the `workflow.add(BuildImages(...))` line with:
     )
 ```
 
-Update the import to bring in `Steps` and drop `subtask`, which the demo no longer uses.
-
 - [ ] **Step 6: Update the example test for the new ids**
 
 The ids change, because the engine now derives them: `build-images/build/control-plane` becomes `002.build-images/build-control-plane`. In `tests/test_examples.py`, update `test_demo_workflow_example_reports_subtasks_without_compiling_them` to the new shape while keeping the invariant it exists for — step ids appear in the event stream and stay out of the compiled unit list:
 
 ```python
-def test_demo_workflow_example_reports_subtasks_without_compiling_them() -> None:
+def test_demo_workflow_example_reports_steps_without_compiling_them() -> None:
     """The demo is where the composite contract is visible end to end: the steps
     appear in the event stream, and the compiled unit list is unaffected."""
     stdout = _run_demo().stdout
@@ -1254,7 +1350,16 @@ git commit -m "Resume a composite without redoing the steps it finished"
 
 ## Self-review notes
 
-- **Spec coverage.** "One construct, always sequential" → Task 5. "Data between steps" → Tasks 1 and 5. "Identity: the engine names the steps" → Task 4. "The journal, per step" → Tasks 2, 3, 4 and 6. "Why resume and data flow do not collide" → the resume tests in Task 6. Every row of the spec's errors table has a test in Task 5 except the resume rows, which are in Task 6.
+- **Spec coverage.** "One construct, always sequential" → Task 5. "Data between
+  steps" → Tasks 1 and 5. "Identity: the engine names the steps" → Task 4.
+  "The journal, per step" → Tasks 2, 3, 4 and 6. "Why resume and data flow do
+  not collide" → Task 6, including reconstruction of `None` after a skipped
+  reusable step and refusal to rerun an interrupted non-idempotent child. Task
+  4 exercises real composite resources, nested parent ids, and child/parent
+  failure events. Task 5 covers fingerprint changes caused by order, length,
+  slug, task class, reuse key, and nested child topology. Every row of the
+  spec's errors table has a test in Task 5 except the resume rows, which are in
+  Task 6.
 - **The refactor is load-bearing and invisible.** Task 3 changes no behaviour, and its only proof is that the existing suite stays green. If it goes wrong, everything after it inherits the damage — so treat an unexpected failure there as a stop, not a nuisance.
 - **`Steps.idempotent = True` is not a detail.** The review of the spec caught that without it the enclosing unit's failed record raises before `Steps.run()` is ever entered, which would make the per-step journal unreachable on exactly the resume it exists for. Task 5 asserts it directly.
 - **Deliberately not here.** No parallel composite, no step-level `Selection`, no step declaring its own resources. All three are stated limitations in the spec, not oversights.
