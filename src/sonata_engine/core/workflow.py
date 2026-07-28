@@ -68,6 +68,61 @@ def _resolve_slug(slugs: list[str], wanted: str) -> int:
     return matches[0]
 
 
+def _execute_recorded(
+    *,
+    task: Task[Any],
+    task_id: str,
+    make_inputs: Callable[[], TaskInputs],
+    jrnl: Journal | None,
+    resume: bool,
+    on_outcome: Callable[[TaskOutcome[Any]], None] | None = None,
+) -> TaskExecution:
+    """Run one thing that has a journal identity, recording its outcome.
+
+    Shared by compiled consumer/acquire units and by the steps of a composite,
+    so the resume decision, the started/passed/failed records, the outcome
+    validation and the journal-failure note exist once. Release units keep
+    their own path in `_release`: cleanup must not abort on a journal error.
+
+    `make_inputs` is a callable, not a value, because it is called inside the
+    lifecycle -- a failure resolving resources must be reported as a task
+    failure, not escape unreported.
+    """
+    if jrnl is not None and resume:
+        if jrnl.decide_task(task_id, task) == "skip":
+            jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
+            _task_skipped(task_id=task_id, title=task.title)
+            return TaskExecution(task_id=task_id, status="skipped", outcome=None)
+
+    attempt = jrnl.next_attempt(task_id) if jrnl is not None else 0
+    if jrnl is not None:
+        # Flush the started record BEFORE executing, so a crash mid-task is durable.
+        jrnl.record_started(task_id, attempt)
+    try:
+        with _task_lifecycle(task_id=task_id, title=task.title):
+            outcome = task.run(make_inputs())
+            if not isinstance(outcome, TaskOutcome):
+                raise InvalidTaskOutcomeError(
+                    f"{task_id} returned {outcome!r}, expected TaskOutcome"
+                )
+            if isinstance(task, ReusableTask) and outcome.value is not None:
+                raise InvalidTaskOutcomeError(
+                    f"{task_id} is reusable and returned a runtime value"
+                )
+            if on_outcome is not None:
+                on_outcome(outcome)
+    except BaseException as exc:
+        if jrnl is not None:
+            try:
+                jrnl.record_failed(task_id, attempt)
+            except BaseException as journal_error:
+                exc.add_note(f"Failed to record task failure: {journal_error}")
+        raise
+    if jrnl is not None:
+        jrnl.record_passed(task_id, attempt, outcome.evidence)
+    return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
+
+
 @dataclass
 class Workflow:
     """Ordered workflow builder, compiler, and executor."""
@@ -251,48 +306,28 @@ class Workflow:
         task failure) -- unlike `_release`, which must keep attempting every pending
         release even if the journal itself is failing.
         """
-        task_id = compiled_task.task_id
-        task = compiled_task.task
-        if jrnl is not None and resume:
-            if jrnl.decide(compiled_task) == "skip":
-                jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-                _task_skipped(task_id=task_id, title=task.title)
-                return TaskExecution(task_id=task_id, status="skipped", outcome=None)
 
-        attempt = self._next_attempt(jrnl, task_id)
-        if jrnl is not None:
-            # Flush the started record BEFORE executing, so a crash mid-task is durable.
-            jrnl.record_started(task_id, attempt)
-        try:
-            with _task_lifecycle(task_id=task_id, title=task.title):
-                inputs = state.inputs_for(
-                    compiled_task.resource.requires
-                    if compiled_task.kind == "acquire" and compiled_task.resource is not None
-                    else compiled_task.required_resources
-                )
-                outcome = task.run(inputs)
-                if not isinstance(outcome, TaskOutcome):
-                    raise InvalidTaskOutcomeError(
-                        f"{task_id} returned {outcome!r}, expected TaskOutcome"
-                    )
-                if isinstance(task, ReusableTask) and outcome.value is not None:
-                    raise InvalidTaskOutcomeError(
-                        f"{task_id} is reusable and returned a runtime value"
-                    )
-                if compiled_task.kind == "acquire" and compiled_task.resource is not None:
-                    state.publish(compiled_task.resource, outcome.value)
-                if on_executed is not None:
-                    on_executed()
-        except BaseException as exc:
-            if jrnl is not None:
-                try:
-                    jrnl.record_failed(task_id, attempt)
-                except BaseException as journal_error:
-                    exc.add_note(f"Failed to record task failure: {journal_error}")
-            raise
-        if jrnl is not None:
-            jrnl.record_passed(task_id, attempt, outcome.evidence)
-        return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
+        def make_inputs() -> TaskInputs:
+            return state.inputs_for(
+                compiled_task.resource.requires
+                if compiled_task.kind == "acquire" and compiled_task.resource is not None
+                else compiled_task.required_resources
+            )
+
+        def on_outcome(outcome: TaskOutcome[Any]) -> None:
+            if compiled_task.kind == "acquire" and compiled_task.resource is not None:
+                state.publish(compiled_task.resource, outcome.value)
+            if on_executed is not None:
+                on_executed()
+
+        return _execute_recorded(
+            task=compiled_task.task,
+            task_id=compiled_task.task_id,
+            make_inputs=make_inputs,
+            jrnl=jrnl,
+            resume=resume,
+            on_outcome=on_outcome,
+        )
 
     def _record_release_outcome(
         self, release_errors: list[BaseException], record: Callable[[], None]
