@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
+from runpy import run_path
+
+from sonata_engine import TaskInputs
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -26,6 +30,15 @@ def _run_demo() -> subprocess.CompletedProcess[str]:
 
 def test_demo_workflow_example_runs_successfully() -> None:
     assert "Compiled task IDs and outcomes" in _run_demo().stdout
+
+
+def test_first_demo_build_starts_a_fresh_image_tuple() -> None:
+    build_image = run_path(str(REPO_ROOT / "examples" / "demo_workflow.py"))["BuildImage"]
+    inputs = replace(TaskInputs.empty(), _upstream="outer value")
+
+    outcome = build_image("control-plane", first=True).run(inputs)
+
+    assert outcome.value == ("registry.example/control-plane:v1",)
 
 
 def test_demo_workflow_example_reports_steps_without_compiling_them() -> None:

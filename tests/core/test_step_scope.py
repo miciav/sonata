@@ -30,7 +30,11 @@ class _Echo(Task[str]):
 
 
 def test_a_unit_receives_a_step_scope() -> None:
-    """The runner attaches one to every unit, so any task can be a composite."""
+    """The runner attaches one to every consumer/acquire unit, so any such task
+    can be a composite. Release units are the exception: `_release` calls
+    `task.run()` directly (its own cleanup-specific path), so a release task's
+    `_step_scope` is always `None` -- harmless today since releases are always
+    engine-generated, never user-written composites."""
     seen: list[object] = []
 
     class Peeker(Task[None]):
@@ -140,6 +144,28 @@ def test_a_step_gets_its_own_nested_scope() -> None:
         if event.kind == "task.started" and event.task_id == "001.outer/inner/echo"
     )
     assert echo.parent_task_id == "001.outer/inner"
+
+
+@pytest.mark.parametrize("bad_slug", ["", "with/slash"])
+def test_run_step_rejects_an_empty_or_slash_containing_slug(bad_slug: str) -> None:
+    """`Steps.__init__` rejects empty and duplicate slugs, but the scope is also
+    reachable directly (as this test does) -- the pattern a downstream author
+    will copy, so it must reject a malformed slug too."""
+
+    class Runner(Task[None]):
+        title = "Runner"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            scope = inputs._step_scope
+            assert scope is not None
+            scope.run_step(_Echo(), bad_slug, upstream=None)
+            return TaskOutcome()
+
+    workflow = Workflow(workflow_id="w")
+    workflow.add(Runner())
+
+    with pytest.raises(ValueError, match="must be non-empty and contain no '/'"):
+        workflow.run()
 
 
 def test_a_failing_step_emits_child_and_parent_failures() -> None:

@@ -39,7 +39,8 @@ class ReusableTask(Task[None], ABC):
 
     `reuse_key` identifies the task's semantic configuration independently from its
     compiler-owned task ID. It must change whenever inputs that affect reusable output
-    change.
+    change. A subclass may set `reusable = False` to opt out of skipping while
+    retaining the evidence-only outcome contract.
     """
 
     reusable: bool = True

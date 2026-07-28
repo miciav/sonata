@@ -129,7 +129,7 @@ def test_changing_the_step_list_invalidates_resume(tmp_path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     ran: list[str] = []
     attempts = [0]
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="boom"):
         _workflow(ran, attempts).run(journal=config, verifiers=ALWAYS)
 
     changed = Workflow(workflow_id="w")

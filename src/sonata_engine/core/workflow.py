@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import partial
@@ -16,6 +15,7 @@ from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource, ResourceOp, ResourceOperation
 from sonata_engine.core.selection import Selection
+from sonata_engine.core.slug import slugify as _slugify
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.errors import (
     InvalidTaskOutcomeError,
@@ -25,8 +25,6 @@ from sonata_engine.errors import (
 )
 from sonata_engine.journal import Journal, JournalConfig, Verifier
 from sonata_engine.workflow.reporting import _task_lifecycle, _task_skipped
-
-_SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass
@@ -44,10 +42,6 @@ class _RunState:
     def remove(self, resource: Resource[Any]) -> None:
         """Drop the reference so a large acquired value can be collected."""
         self.values.pop(id(resource), None)
-
-
-def _slugify(title: str) -> str:
-    return _SLUG_INVALID_CHARS.sub("-", title.lower()).strip("-")
 
 
 def _resolve_slug(slugs: list[str], wanted: str) -> int:
@@ -133,6 +127,8 @@ class _StepScope:
     resume: bool
 
     def run_step(self, step: Task[Any], slug: str, upstream: Any) -> TaskExecution:  # noqa: ANN401
+        if not slug or "/" in slug:
+            raise ValueError(f"step slug {slug!r} must be non-empty and contain no '/'")
         step_id = f"{self.prefix}/{slug}"
 
         def make_inputs() -> TaskInputs:

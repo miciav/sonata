@@ -13,7 +13,7 @@ from sonata_engine.errors import (
 
 if TYPE_CHECKING:
     from sonata_engine.core.resource_task import Resource
-    from sonata_engine.core.step_scope import StepScope
+    from sonata_engine.core.step_scope import _StepScopeProtocol
 
 T = TypeVar("T")
 
@@ -28,7 +28,10 @@ class TaskInputs:
     _values: Mapping[int, object]
     _accessible: Set[int]
     _upstream: Any = _NO_UPSTREAM
-    _step_scope: StepScope | None = field(default=None, compare=False, repr=False)
+    # compare=False is load-bearing, not cosmetic: `_StepScope` holds a `TaskInputs`
+    # in its own `base_inputs` field, so if this field participated in `__eq__`,
+    # comparing two `TaskInputs` would walk into a scope and back into inputs.
+    _step_scope: _StepScopeProtocol | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_values", MappingProxyType(dict(self._values)))

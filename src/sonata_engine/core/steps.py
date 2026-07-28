@@ -4,7 +4,9 @@ from typing import Any, override
 
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
+from sonata_engine.core.slug import slugify
 from sonata_engine.core.task import Task
+from sonata_engine.errors import StepScopeUnavailableError
 
 
 class Steps(Task[Any]):
@@ -29,16 +31,12 @@ class Steps(Task[Any]):
     idempotent = True
 
     def __init__(self, *, title: str, steps: tuple[Task[Any], ...]) -> None:
-        # Imported here: `core.workflow` imports this module's package, and
-        # `_slugify` lives beside the compiler that owns slug shape.
-        from sonata_engine.core.workflow import _slugify
-
         if not steps:
             raise ValueError("Steps requires at least one step")
 
         slugs: list[str] = []
         for step in steps:
-            slug = _slugify(step.title)
+            slug = slugify(step.title)
             if not slug:
                 raise ValueError(f"step title {step.title!r} produces an empty slug")
             if slug in slugs:
@@ -64,7 +62,7 @@ class Steps(Task[Any]):
     def run(self, inputs: TaskInputs) -> TaskOutcome[Any]:
         scope = inputs._step_scope
         if scope is None:
-            raise RuntimeError(
+            raise StepScopeUnavailableError(
                 f"{type(self).__name__} {self.title!r} must be run by the workflow "
                 "runner: add it to a Workflow rather than calling run() directly"
             )

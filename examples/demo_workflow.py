@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from typing import Generator
 
 from sonata_engine import (
-    NoUpstreamValueError,
     Resource,
     Steps,
     Task,
@@ -55,20 +54,17 @@ class PrepareSource(Task[str]):
 
 class BuildImage(Task[tuple[str, ...]]):
     """One image build. The same class occupies every position in the chain:
-    the first instance catches the "no predecessor" error and starts the
-    tuple; later instances extend the upstream tuple.
+    the first instance starts the tuple; later instances extend it.
     """
 
-    def __init__(self, image: str) -> None:
+    def __init__(self, image: str, *, first: bool = False) -> None:
         self.title = f"Build {image}"
         self._image = image
+        self._first = first
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[str, ...]]:
         workflow_log(f"docker build {self._image}")
-        try:
-            built = inputs.upstream()
-        except NoUpstreamValueError:
-            built = ()
+        built = () if self._first else inputs.upstream()
         return TaskOutcome(value=(*built, f"registry.example/{self._image}:v1"))
 
 
@@ -110,7 +106,13 @@ def main() -> None:
     workflow.add(
         Steps(
             title="Build images",
-            steps=(*(BuildImage(image) for image in IMAGES), ScanImages()),
+            steps=(
+                *(
+                    BuildImage(image, first=index == 0)
+                    for index, image in enumerate(IMAGES)
+                ),
+                ScanImages(),
+            ),
         )
     )
     workflow.add(PushImages(), requires=(builder_vm,))

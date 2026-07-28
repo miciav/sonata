@@ -64,3 +64,13 @@ class SelectionError(Exception):
     one that does not resolve to exactly one task per endpoint (unknown or
     ambiguous slug).
     """
+
+
+class StepScopeUnavailableError(Exception):
+    """Raised when a `Steps` (or other step-scope consumer) runs without a scope.
+
+    A step scope is attached by the workflow runner to consumer and acquire
+    units. This error normally means the task was called directly rather than
+    through `Workflow.run()` -- add it to a `Workflow` instead of calling
+    `run()` on it yourself.
+    """

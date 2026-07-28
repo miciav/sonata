@@ -306,7 +306,7 @@ class Journal:
         return decide_resume(
             self._states.get(task_id),
             idempotent=task.idempotent,
-            reusable=isinstance(task, ReusableTask),
+            reusable=isinstance(task, ReusableTask) and task.reusable,
             verifiers=self.verifiers,
         )
 

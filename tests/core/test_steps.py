@@ -8,15 +8,20 @@ import pytest
 from sonata_engine import (
     Evidence,
     JournalConfig,
+    Resource,
     ReusableTask,
     Selection,
     Steps,
+    StepScopeUnavailableError,
     Task,
     TaskInputs,
     TaskOutcome,
     Workflow,
 )
-from sonata_engine.errors import InvalidTaskOutcomeError, NoUpstreamValueError
+from sonata_engine.errors import (
+    InvalidTaskOutcomeError,
+    NoUpstreamValueError,
+)
 
 
 class _Produce(Task[str]):
@@ -148,6 +153,39 @@ def test_a_reusable_step_returning_a_value_raises() -> None:
 
 def test_steps_is_idempotent_so_a_failed_unit_can_be_re_entered() -> None:
     assert Steps(title="Deploy", steps=(_Forward(),)).idempotent is True
+
+
+def test_running_steps_outside_a_workflow_raises() -> None:
+    """Calling `run()` directly bypasses the runner, so there is no step scope
+    to run steps in -- a user error, not an engine crash."""
+    with pytest.raises(StepScopeUnavailableError, match="must be run by the workflow"):
+        Steps(title="Deploy", steps=(_Forward(),)).run(TaskInputs.empty())
+
+
+def test_a_failing_step_still_releases_the_composites_resources() -> None:
+    """A composite that declares a resource and fails partway through must not
+    leak it: cleanup runs exactly as it would for a plain consumer task."""
+    released: list[str] = []
+    resource = Resource[str](
+        title="Acquire token",
+        acquire=lambda _inputs: "token-42",
+        release=lambda _inputs, value: released.append(value),
+    )
+
+    class Boom(Task[None]):
+        title = "Boom"
+
+        def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+            assert inputs.resource(resource) == "token-42"
+            raise RuntimeError("boom")
+
+    workflow = Workflow(workflow_id="w")
+    workflow.add(Steps(title="Deploy", steps=(Boom(),)), requires=(resource,))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        workflow.run()
+
+    assert released == ["token-42"]
 
 
 def test_the_fingerprint_payload_covers_the_steps() -> None:

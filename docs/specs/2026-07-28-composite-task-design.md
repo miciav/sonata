@@ -215,6 +215,7 @@ distinct from `None`, which remains a legitimate and reconstructible step value.
 | `steps=()` | `ValueError` at construction. |
 | step returns a non-`TaskOutcome` | the shared executor raises `InvalidTaskOutcomeError`. |
 | `upstream()` with no incoming or preceding value | raises `NoUpstreamValueError`, new in `errors.py` beside `ResourceUnavailableError`, which has the same shape. Not `None`: `None` is a legitimate step value. |
+| `Steps.run()` called directly | raises `StepScopeUnavailableError`; add the composite to a `Workflow` so the runner can attach its scope. |
 | a step raises | its child lifecycle emits `task.failed`, the exception propagates, and the enclosing unit fails. |
 | a reusable step returns a non-`None` value | the shared executor raises `InvalidTaskOutcomeError`, exactly as for a compiled unit. |
 | a composite among the steps | works: ids and fingerprint payloads nest, and its first step receives the outer upstream. |
@@ -227,6 +228,10 @@ distinct from `None`, which remains a legitimate and reconstructible step value.
 - **`Selection` still names only the composite**, never one of its steps. Steps
   share one fate; selecting a slice cannot split them.
 - **Steps are sequential.** There is no parallel composite in this design.
+- **Step outcomes are not separate workflow results.** `WorkflowResult` exposes
+  the composite's final value, not each child's `TaskOutcome` or evidence.
+  Child lifecycle events are still emitted, and a configured journal retains
+  step evidence for resume.
 
 ## Alternatives rejected
 

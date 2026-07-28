@@ -25,6 +25,7 @@ from sonata_engine.errors import (
     ResourceUnavailableError,
     ResumeConfigurationError,
     SelectionError,
+    StepScopeUnavailableError,
     UndeclaredResourceError,
     UnsupportedJournalSchemaError,
     WorkflowTopologyMismatchError,
@@ -44,7 +45,7 @@ from sonata_engine.workflow import (
     workflow_log,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "AmbiguousTaskStateError",
@@ -66,6 +67,7 @@ __all__ = [
     "SelectionError",
     "status",
     "Steps",
+    "StepScopeUnavailableError",
     "subtask",
     "Task",
     "TaskInputs",
