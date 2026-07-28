@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -13,6 +13,7 @@ from sonata_engine.errors import (
 
 if TYPE_CHECKING:
     from sonata_engine.core.resource_task import Resource
+    from sonata_engine.core.step_scope import StepScope
 
 T = TypeVar("T")
 
@@ -27,6 +28,7 @@ class TaskInputs:
     _values: Mapping[int, object]
     _accessible: Set[int]
     _upstream: Any = _NO_UPSTREAM
+    _step_scope: StepScope | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_values", MappingProxyType(dict(self._values)))

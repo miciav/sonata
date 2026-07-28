@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
 
@@ -121,6 +121,34 @@ def _execute_recorded(
     if jrnl is not None:
         jrnl.record_passed(task_id, attempt, outcome.evidence)
     return TaskExecution(task_id=task_id, status="passed", outcome=outcome)
+
+
+@dataclass(frozen=True, slots=True)
+class _StepScope:
+    """The runner's `StepScope`: everything a composite must not know."""
+
+    prefix: str
+    base_inputs: TaskInputs
+    jrnl: Journal | None
+    resume: bool
+
+    def run_step(self, step: Task[Any], slug: str, upstream: Any) -> TaskExecution:  # noqa: ANN401
+        step_id = f"{self.prefix}/{slug}"
+
+        def make_inputs() -> TaskInputs:
+            return replace(
+                self.base_inputs,
+                _upstream=upstream,
+                _step_scope=replace(self, prefix=step_id),
+            )
+
+        return _execute_recorded(
+            task=step,
+            task_id=step_id,
+            make_inputs=make_inputs,
+            jrnl=self.jrnl,
+            resume=self.resume,
+        )
 
 
 @dataclass
@@ -308,10 +336,19 @@ class Workflow:
         """
 
         def make_inputs() -> TaskInputs:
-            return state.inputs_for(
+            base = state.inputs_for(
                 compiled_task.resource.requires
                 if compiled_task.kind == "acquire" and compiled_task.resource is not None
                 else compiled_task.required_resources
+            )
+            return replace(
+                base,
+                _step_scope=_StepScope(
+                    prefix=compiled_task.task_id,
+                    base_inputs=base,
+                    jrnl=jrnl,
+                    resume=resume,
+                ),
             )
 
         def on_outcome(outcome: TaskOutcome[Any]) -> None:
