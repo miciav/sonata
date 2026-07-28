@@ -7,7 +7,7 @@ from typing import Any, Generic, Literal, TypeVar
 
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
-from sonata_engine.core.task import ReusableTask, Task
+from sonata_engine.core.task import Task
 from sonata_engine.errors import MissingAcquireUnitError
 
 T = TypeVar("T")
@@ -65,7 +65,7 @@ class CompiledWorkflow:
                 task.task_id,
                 task.kind,
                 f"{type(task.task).__module__}.{type(task.task).__qualname__}",
-                task.task.reuse_key if isinstance(task.task, ReusableTask) else None,
+                task.task._fingerprint_payload(),
                 tuple(_acquire_id(resource) for resource in task.required_resources),
             )
             for task in self.tasks

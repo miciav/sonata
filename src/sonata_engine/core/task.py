@@ -24,6 +24,15 @@ class Task(Generic[T], ABC):
     def run(self, inputs: TaskInputs) -> TaskOutcome[T]:
         raise NotImplementedError
 
+    def _fingerprint_payload(self) -> object:
+        """What this task contributes to the workflow's resume fingerprint.
+
+        `None` for a task whose identity is fully described by its class and
+        position. A task that owns children returns something covering them, so
+        editing them invalidates resume. Must be JSON-serializable.
+        """
+        return None
+
 
 class ReusableTask(Task[None], ABC):
     """A task eligible for skip-on-verified-evidence.
@@ -44,3 +53,7 @@ class ReusableTask(Task[None], ABC):
     @abstractmethod
     def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         raise NotImplementedError
+
+    @override
+    def _fingerprint_payload(self) -> object:
+        return self.reuse_key
