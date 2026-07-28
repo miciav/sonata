@@ -13,6 +13,10 @@ class ResourceUnavailableError(Exception):
     """Raised when a declared resource has not been acquired."""
 
 
+class NoUpstreamValueError(Exception):
+    """Raised when a step asks for an upstream value and none precedes it."""
+
+
 class ResourceDependencyCycleError(Exception):
     """Raised when resource lifecycle dependencies contain a cycle."""
 

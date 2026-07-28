@@ -5,12 +5,19 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from sonata_engine.errors import ResourceUnavailableError, UndeclaredResourceError
+from sonata_engine.errors import (
+    NoUpstreamValueError,
+    ResourceUnavailableError,
+    UndeclaredResourceError,
+)
 
 if TYPE_CHECKING:
     from sonata_engine.core.resource_task import Resource
 
 T = TypeVar("T")
+
+# Distinct from `None`, which is a legitimate and reconstructible step value.
+_NO_UPSTREAM: Any = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +26,7 @@ class TaskInputs:
 
     _values: Mapping[int, object]
     _accessible: Set[int]
+    _upstream: Any = _NO_UPSTREAM
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_values", MappingProxyType(dict(self._values)))
@@ -51,3 +59,13 @@ class TaskInputs:
         except KeyError as exc:
             raise ResourceUnavailableError(f"resource {resource.title!r} is unavailable") from exc
         return cast(T, value)
+
+    def upstream(self) -> Any:  # noqa: ANN401
+        """The value the preceding step produced.
+
+        Raises when nothing precedes this step: the first step of a top-level
+        composite, or a task not running inside one.
+        """
+        if self._upstream is _NO_UPSTREAM:
+            raise NoUpstreamValueError("no upstream value: nothing ran before this step")
+        return self._upstream
