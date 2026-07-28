@@ -55,18 +55,25 @@ Measured against `d53a7a9`, not recalled:
 Steps(title="Deploy the chart", steps=(HelmInstall(chart), WaitRollout(), ResolveEndpoint()))
 ```
 
-`Steps` is a concrete `Task` in `core/steps.py`, exported from `sonata_engine`. It
-imports `subtask` from `workflow/reporting`; `core/workflow.py:27` already imports
-from there, so the direction is established.
+`Steps` is a concrete `Task[Any]` in `core/steps.py`, exported from
+`sonata_engine`.
 
-**The compiler does not know it exists.** It sees one task like any other, which
-is what keeps nested-workflow identity out of this design.
+**The compiler does not special-case it.** It sees one task like any other,
+which keeps nested-workflow identity out of compilation and selection.
 
-The engine runs the steps in order, one at a time, on the thread already
-running the task. The threading hazard `subtask` had to document —
-concurrently opened subtasks nesting under each other — cannot arise here,
-because the loop belongs to the engine and it opens one subtask at a time.
-The rule disappears instead of being taught.
+`Steps.idempotent` is always `True`. This says only that the coordinator is safe
+to re-enter after an interrupted or failed attempt; it says nothing about the
+steps being idempotent. On resume the coordinator re-enters its loop, and each
+step's own journal state and `idempotent` flag decide whether that step may run.
+Without this, the failed journal record for the enclosing compiled unit would
+raise `AmbiguousTaskStateError` before `Steps.run()` could consult any step
+record.
+
+The engine runs the steps in order, one at a time, on the thread already running
+the task. The threading hazard `subtask` had to document — concurrently opened
+subtasks nesting under each other — cannot arise in the loop itself because only
+one step lifecycle is open at a time. A step that starts its own worker threads
+still owns their lifetime, exactly as an ordinary task does.
 
 The independent case uses the same construct and simply never asks for the
 upstream value. One thing to learn.
@@ -75,7 +82,8 @@ upstream value. One thing to learn.
 
 `TaskInputs` gains a declared field for the upstream value. It must be declared:
 `slots=True` makes attaching one at runtime impossible, which is the right
-constraint to be stopped by.
+constraint to be stopped by. The field defaults to a private `_NO_UPSTREAM`
+sentinel, so `TaskInputs.empty()` and the existing constructor remain usable.
 
 ```python
 def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
@@ -88,19 +96,28 @@ arrives as a function argument, never as ambient state someone reads. That
 distinction is the whole difference between this and the shared-global fallback
 in `bind_workflow_context`.
 
+A top-level `Steps` starts with `_NO_UPSTREAM`, so `upstream()` in its first
+step raises. A nested `Steps` starts with the upstream value it received from
+its parent, so composition is transparent: the first nested step can consume
+the value produced immediately before the nested composite.
+
+The loop updates the value from the shared executor's `TaskExecution`: a step
+that ran contributes `execution.outcome.value`, including a legitimate `None`;
+a skipped step contributes `None`, the only value a skippable `ReusableTask`
+may return. The non-empty composite then returns `TaskOutcome(value=upstream)`.
+
 A step observes the resources the **composite** declared, identical for every
 step. A step cannot declare resources of its own — see Limitations.
 
 `Steps` returns the last step's value. Python cannot express "the type of the
-last element of a tuple", so `Steps` is `Task[Any]`; a caller wanting a tighter
-type wraps it.
+last element of a tuple", so a caller wanting a tighter type wraps it.
 
 ### Identity: the engine names the steps
 
 The composite never sees a compiler-assigned id, but the **runner** does, and the
 runner is what constructs the step-scoped handle the composite works through. So
 the handle does the naming: the composite offers a step, the handle produces both
-the subtask id and the journal id, each prefixed with the compiled unit id.
+the child event id and the journal id, each prefixed with the compiled unit id.
 
 ```
 001.deploy/install-chart
@@ -118,61 +135,89 @@ Three consequences, all free:
 - `Steps` takes **no slug argument**. The caller supplies titles, nothing else.
 
 The step segment comes from `_slugify(step.title)`, the compiler's own function.
+Construction rejects an empty normalized slug and duplicate **normalized
+slugs**, not merely duplicate title strings: `"Build A"` and `"Build-A"` must
+not produce the same journal identity.
 
 ### The journal, per step
 
-`TaskInputs` carries the handle, alongside the upstream value. The division
-of labour is fixed: the **handle** owns everything needing the compiled unit
-id or the journal — producing step ids, deciding, recording. **`Steps`** owns
-the loop and threads the upstream value, and opens each `subtask` with the id
-the handle gave it. Neither reaches into the other's half.
+`TaskInputs` carries a private step-runner handle alongside the upstream value.
+The compiled runner creates it with the compiled unit id, journal and `resume`
+flag. The handle owns everything needing that state: producing a child id,
+scoping a nested handle beneath it, deciding, recording and emitting lifecycle
+events. `Steps` owns only the loop and threads the upstream value.
 
-For each step:
-ask `decide`; on `skip`, record the skip and move on; otherwise record `started`,
-run it inside a `subtask`, then record `passed` with its evidence or `failed`.
+There is one internal execution routine shared by consumer/acquire units and
+steps; release units keep their existing cleanup-specific path. The shared
+routine performs the existing sequence in one place:
+
+1. only when `resume=True`, ask the journal to decide;
+2. on `skip`, record and emit `task.skipped`;
+3. otherwise record `started`, run inside `_task_lifecycle`, validate the result,
+   then record `passed` with its evidence or `failed`;
+4. reject a non-`TaskOutcome` and a non-`None` value from `ReusableTask` with
+   `InvalidTaskOutcomeError`.
+
+The existing compiled-unit runner delegates to this routine, and the step handle
+delegates to the same routine. The validation and journal error behaviour are
+therefore inherited in fact, rather than copied into `Steps`. `subtask` remains
+the public reporting-only primitive for hand-written tasks; `Steps` does not use
+it.
 
 The policy is **`decide_resume` unchanged**, not a second implementation of it:
 reusable with verifying evidence skips, everything else reruns, and an
 interrupted non-idempotent step raises `AmbiguousTaskStateError` exactly as a
-unit does.
+unit does. With `resume=False`, every step runs even when the configured journal
+already contains a verifying reusable record, matching current unit behaviour.
 
-`CompiledWorkflow.fingerprint` extends to cover a composite's step list — each
-step's class path and `reuse_key`, the same fields it already collects per unit.
-Without that, editing a composite's steps would silently reuse stale step
-records, which is the class of silent failure this design exists to remove.
+`Task` gains one protected fingerprint-payload method with a default that
+preserves existing tasks unchanged. `ReusableTask` contributes its `reuse_key`.
+`Steps` contributes an ordered tuple containing each normalized step slug, class
+path and fingerprint payload. A nested `Steps` therefore contributes its
+children recursively.
+
+`CompiledWorkflow.fingerprint` consumes that generic task payload instead of
+checking for `Steps`. It still sees one compiled unit, while changes to step
+slugs, order, classes, reuse keys or nested step lists invalidate resume.
 
 ### Why resume and data flow do not collide
 
 They appear to: if step 3 is skipped, where does step 4's upstream come from?
-The question does not arise, because **Sonata already forbids the combination**.
-`core/workflow.py:278` rejects a `ReusableTask` that returns a runtime value, and
-the README states that runtime values are never journalled or reconstructed —
-resource acquire callbacks rerun to produce fresh ones.
+The answer is already fixed by `ReusableTask`: its result type is
+`TaskOutcome[None]`, and `core/workflow.py:278` rejects any non-`None` runtime
+value. A skipped step can therefore reconstruct its only legal upstream value,
+`None`, without storing a runtime value in the journal.
 
-So the invariant is already written: **skippable if and only if it produces no
-value.** The two cases partition themselves:
+The two cases are:
 
 - **Value-producing steps** (install a release, then read the address it exposes)
   rerun on resume. Correct: a release name is in-process state and must be fresh.
 - **Reusable, evidence-producing steps** (five image builds, evidence being the
   image digest, verified by an injected downstream verifier as the README already
-  prescribes for OCI artifacts) skip on resume. The fifth fails, you resume, the
-  first four skip.
+  prescribes for OCI artifacts) skip on resume and contribute `None` as upstream,
+  exactly as they did when they ran. The fifth fails, you resume, the first four
+  skip and the fifth retries because the image-build task is also
+  `idempotent=True`.
 
-Nothing downstream can need a skipped step's value, because a skippable step is
-forbidden from having one.
+`reusable` and `idempotent` answer different questions and remain independent:
+the former permits a verified successful step to skip; the latter permits a
+failed or interrupted step to retry.
+
+`_NO_UPSTREAM` is used only when there is no preceding value at all. It is
+distinct from `None`, which remains a legitimate and reconstructible step value.
 
 ## Errors and edge cases
 
 | case | behaviour |
 |------|-----------|
-| duplicate step titles | `ValueError` at construction. The title is both the id segment and what the UI shows; duplicates are ambiguous either way. |
+| duplicate normalized step slugs | `ValueError` at construction. Different titles that normalize to the same journal id are ambiguous. |
+| a step title normalizes to an empty slug | `ValueError` at construction, matching the compiler's rejection of empty task slugs. |
 | `steps=()` | `ValueError` at construction. |
-| step returns a non-`TaskOutcome` | `InvalidTaskOutcomeError`, the error the runner already raises for units. |
-| `upstream()` on the first step | raises `NoUpstreamValueError`, new in `errors.py` beside `ResourceUnavailableError`, which has the same shape. Not `None`: `None` is a legitimate step value, and the two cases must stay distinguishable. |
-| a step raises | its subtask emits `task.failed`, the exception propagates, the unit fails. Existing `subtask` behaviour, unchanged. |
-| a reusable step returns a value | already an `InvalidTaskOutcomeError`. Inherited, not restated. |
-| a composite among the steps | works, ids nest. Pinned by a test rather than left to be discovered. |
+| step returns a non-`TaskOutcome` | the shared executor raises `InvalidTaskOutcomeError`. |
+| `upstream()` with no incoming or preceding value | raises `NoUpstreamValueError`, new in `errors.py` beside `ResourceUnavailableError`, which has the same shape. Not `None`: `None` is a legitimate step value. |
+| a step raises | its child lifecycle emits `task.failed`, the exception propagates, and the enclosing unit fails. |
+| a reusable step returns a non-`None` value | the shared executor raises `InvalidTaskOutcomeError`, exactly as for a compiled unit. |
+| a composite among the steps | works: ids and fingerprint payloads nest, and its first step receives the outer upstream. |
 
 ## Limitations, stated rather than hidden
 
@@ -191,6 +236,12 @@ numbers `001.`, `002.` over one flat list, so it must first answer what a nested
 unit's identity is, how selection addresses it, and what the journal records —
 the nested-workflow design `subtask`'s spec parked. None of those answers are
 needed to solve the problem in hand.
+
+**A `Steps` special case in `CompiledWorkflow.fingerprint`.** It is smaller for
+one release but makes the compiler know the construct and fails again for the
+next composite type. A protected payload with a no-op default keeps existing
+tasks unchanged and makes recursive identity belong to the task that owns the
+children.
 
 **Upstream carried ambiently in a contextvar**, leaving `TaskInputs` untouched.
 It is the same shape of defect — ambient state read at the wrong moment — that
@@ -212,17 +263,24 @@ motivating workload is served sequentially today.
 ## Testing
 
 - a value flows through the pipeline, including a step that only forwards it;
+- `None` flows as a legitimate value, including across a skipped reusable step;
 - a composite compiles to exactly one unit, and `Selection` naming it keeps it
   whole;
 - an already-written `Task` serves as a step unmodified — the central promise;
-- `upstream()` on the first step raises;
-- duplicate titles and an empty step list raise at construction;
+- `upstream()` on the first step of a top-level composite raises;
+- a nested composite's first step receives the outer upstream;
+- duplicate normalized slugs, an empty slug and an empty step list raise at
+  construction;
 - a step returning a non-`TaskOutcome` raises `InvalidTaskOutcomeError`;
-- **on resume, a reusable step with verifying evidence skips while the steps
-  after it run** — the point of the journal work;
+- a reusable step returning a non-`None` value raises `InvalidTaskOutcomeError`;
+- **after the enclosing unit has failed, resume re-enters `Steps`, skips reusable
+  steps with verifying evidence and retries the failed idempotent step** — the
+  point of the journal work;
+- `resume=False` runs all steps even when the journal contains reusable records;
 - an interrupted non-idempotent step raises `AmbiguousTaskStateError`;
-- changing a composite's step list invalidates resume through the fingerprint;
-- a composite nested inside a composite nests its ids.
+- changing a step slug, order, class, reuse key or nested step list invalidates
+  resume through the fingerprint;
+- a composite nested inside a composite nests its ids and lifecycle parents.
 
 ## Consequences downstream
 
