@@ -100,6 +100,76 @@ keeping a deployment while releasing the VM or cluster it still depends on.
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.
 
+## Reporting steps inside a task
+
+A task that does several things can report them without becoming several
+units. `subtask` emits the same events a compiled unit does, nested under
+whichever task is running:
+
+```python
+from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
+
+class PublishImages(Task[str]):
+    title = "Publish images"
+
+    def __init__(self, slug: str, images: tuple[str, ...]) -> None:
+        self._slug = slug
+        self._images = images
+
+    def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
+        for image in self._images:
+            with subtask(task_id=f"{self._slug}/build/{image}", title=f"Build {image}"):
+                ...  # build it
+
+        with subtask(task_id=f"{self._slug}/scan", title="Scan for vulnerabilities"):
+            ...  # scan everything built above
+
+        with subtask(task_id=f"{self._slug}/push", title="Push the tags"):
+            digest = ...  # push, and keep what the registry answered
+
+        return TaskOutcome(value=digest)
+```
+
+Subtasks need not come from a loop and need not resemble each other — those are
+three different kinds of step, and the last one produces the value the whole
+task returns. Added as `PublishImages("publish-images", ("control-plane",
+"function-runtime"))`, it emits:
+
+```
+001.publish-images
+├── publish-images/build/control-plane
+├── publish-images/build/function-runtime
+├── publish-images/scan
+└── publish-images/push
+```
+
+The step stays one compiled unit: one ordinal, one entry in the journal, one
+thing `Selection` can name. If the scan fails the whole unit fails — sharing
+one fate is what makes these one unit rather than four. Subtasks exist in the
+event stream only, so a consumer's UI can show progress through a long step,
+and a resumed run restarts that step from its beginning.
+
+Pick `task_id` yourself and keep it unique within the run — a consumer keys
+child phases by it, so a repeat merges two steps into one. Do not imitate the
+compiler's `NNN.slug`: those ids are the engine's, and a task is not told its
+own. `slug` is a constructor argument, not a hardcoded literal, because two
+instances of the same task class (two `PublishImages` in one workflow) need
+something to tell their subtask ids apart.
+
+The snippet above is a sketch. For a version that runs — with the sink the
+events need somewhere to go, since `subtask` is a silent no-op without one —
+see `examples/demo_workflow.py`:
+
+```
+uv run python examples/demo_workflow.py
+```
+
+Open subtasks sequentially, on the thread running the task. The parent is
+resolved through a context shared as a fallback for worker threads (which
+start with none of their own); subtasks opened concurrently from worker
+threads — or one left open past its `with` block while another opens — nest
+under each other instead of under the unit, silently.
+
 ## Selecting a slice
 
 `Selection` narrows a run to some of its consumer tasks, addressed by title slug.

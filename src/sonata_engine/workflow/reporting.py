@@ -59,8 +59,9 @@ def _task_lifecycle(
 ) -> Generator[WorkflowContext, None, None]:
     """Emit `task.started` on entry, then `task.passed` or `task.failed` on exit.
 
-    Used exclusively by the compiled-task runner, so lifecycle identity for a
-    `CompiledTask` is owned by the engine, not by the task's own `run()` body.
+    Used by the compiled-task runner: identity for a `CompiledTask` is owned by
+    the engine, never by the task's own `run()` body. A task that wants to
+    report steps it performs itself uses `subtask`, which nests under this one.
     """
     child = _child_context(task_id=task_id, parent_task_id=None, context=context)
     _emit(
@@ -88,7 +89,7 @@ def _task_lifecycle(
                     )
                 )
             except BaseException as reporting_error:
-                exc.add_note(f"Failed to emit task.failed: {reporting_error}")
+                exc.add_note(f"Failed to emit task.failed for {task_id}: {reporting_error}")
             raise
         else:
             _emit(
@@ -100,6 +101,35 @@ def _task_lifecycle(
                     context=child,
                 )
             )
+
+
+@contextmanager
+def subtask(*, task_id: str, title: str = "") -> Generator[None, None, None]:
+    """Report one step performed inside a task's own `run()`.
+
+    Emits the same events a compiled unit does, nested under whichever task is
+    currently running — the parent comes from the bound context, so a task never
+    has to know the id the compiler gave it.
+
+    Subtasks are a reporting concern only. They get no compiler-assigned
+    identity, take no part in selection, and are not journalled: the enclosing
+    unit stays the unit of work, and a resumed step restarts from its beginning.
+
+    `task_id` is the caller's to choose and must be unique within the run. The
+    compiler owns `NNN.slug` and a caller must not mint ids in that shape; build
+    one from what the task itself knows instead, which reads well as its own
+    name extended by the step: `build-images/cp`.
+
+    Open subtasks sequentially, on the thread running the task. The parent
+    comes from a context shared across threads as a fallback for worker
+    threads (which start with no contextvars context of their own); two
+    subtasks opened concurrently in worker threads will nest under each
+    other instead of under the unit, silently. The same happens if a
+    subtask outlives its `with` block (parked in an `ExitStack`, for
+    instance) while another subtask opens.
+    """
+    with _task_lifecycle(task_id=task_id, title=title):
+        yield
 
 
 def _task_skipped(
