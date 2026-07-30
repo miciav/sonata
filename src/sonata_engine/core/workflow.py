@@ -542,9 +542,8 @@ class Workflow:
             last[key] = index
 
         for index, (_task, requires) in enumerate(definitions):
-            for dependency in requires:
-                if isinstance(dependency, Resource):
-                    register(dependency, index)
+            for resource in requires:
+                register(resource, index)
 
         # Acquisition order: by first-consumer index, then discovery order.
         acquire_rank = {key: rank for rank, key in enumerate(discovery)}
