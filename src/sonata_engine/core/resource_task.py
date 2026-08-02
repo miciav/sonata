@@ -31,7 +31,11 @@ class Resource(Generic[T]):
     acquire: Callable[[TaskInputs], T] = field(repr=False)
     release: Callable[[TaskInputs, T], None] = field(repr=False)
     requires: tuple[Resource[Any], ...] = ()
-    infrastructure: bool = False
+    # `keep` retains a resource so a later run need not rebuild it. A resource
+    # that holds a secret -- a staged token, a signing key, an open credential
+    # lease -- declares always_release instead, so leaving it behind is not
+    # something a caller can cause by forgetting to classify it.
+    always_release: bool = False
     acquire_idempotent: bool = False
 
     @property

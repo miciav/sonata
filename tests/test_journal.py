@@ -117,7 +117,7 @@ def test_unreachable_task_remains_in_journal_topology(tmp_path: Path) -> None:
     assert [record["status"] for record in unreachable] == ["pending"]
 
 
-def test_retained_infrastructure_finalizer_is_journaled_as_skipped(
+def test_retained_resource_finalizer_is_journaled_as_skipped(
     tmp_path: Path,
 ) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
@@ -125,9 +125,8 @@ def test_retained_infrastructure_finalizer_is_journaled_as_skipped(
         title="Acquire cluster",
         acquire=lambda _inputs: None,
         release=lambda _inputs, _value: None,
-        infrastructure=True,
     )
-    workflow = Workflow(workflow_id="wf", keep_infrastructure=True)
+    workflow = Workflow(workflow_id="wf", keep=True)
     workflow.add(_Ok("Use cluster"), requires=(resource,))
 
     workflow.run(journal=config)
