@@ -31,7 +31,15 @@ class Resource(Generic[T]):
     acquire: Callable[[TaskInputs], T] = field(repr=False)
     release: Callable[[TaskInputs, T], None] = field(repr=False)
     requires: tuple[Resource[Any], ...] = ()
-    infrastructure: bool = False
+    # `keep` retains a resource so a later run need not rebuild it. A resource
+    # that holds a secret -- a staged token, a signing key, an open credential
+    # lease -- declares always_release instead, so leaving it behind is not
+    # something a caller can cause by forgetting to classify it.
+    always_release: bool = False
+    # Rebuilds an acquired value from its journal record, for a teardown running
+    # in a later process. The journal can only hold JSON, so a release written
+    # against a dataclass needs its own type back rather than a dict.
+    revive: Callable[[Any], T] | None = field(default=None, repr=False)
     acquire_idempotent: bool = False
 
     @property

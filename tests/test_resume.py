@@ -19,7 +19,7 @@ from sonata_engine.errors import (
     UnsupportedJournalSchemaError,
     WorkflowTopologyMismatchError,
 )
-from sonata_engine.journal import Journal, JournalConfig
+from sonata_engine.journal import SCHEMA_VERSION, Journal, JournalConfig
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
 
@@ -83,7 +83,7 @@ def _seed(
     attempt: int = 1,
     evidence: tuple[Evidence, ...] = (),
     workflow_id: str = "wf",
-    schema_version: int = 2,
+    schema_version: int = SCHEMA_VERSION,
     workflow_fingerprint: str | None = None,
 ) -> None:
     record = {

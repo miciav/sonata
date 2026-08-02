@@ -31,6 +31,10 @@ from sonata_engine.errors import (
     WorkflowTopologyMismatchError,
 )
 from sonata_engine.journal import JournalConfig, Verifier
+from sonata_engine.retention import (
+    UnknownRetainedResourceError,
+    release_retained,
+)
 from sonata_engine.workflow import (
     TaskDefinition,
     TaskRun,
@@ -48,6 +52,8 @@ from sonata_engine.workflow import (
 __version__ = "0.4.0"
 
 __all__ = [
+    "release_retained",
+    "UnknownRetainedResourceError",
     "AmbiguousTaskStateError",
     "bind_workflow_sink",
     "CompiledTask",

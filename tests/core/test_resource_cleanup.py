@@ -34,12 +34,12 @@ class _RecordTask(Task[None]):
         return TaskOutcome()
 
 
-def _resource(name: str, calls: list[str], *, infrastructure: bool = False) -> Resource:
+def _resource(name: str, calls: list[str], *, always_release: bool = False) -> Resource:
     return Resource(
         title=f"Acquire {name}",
         acquire=lambda _inputs: calls.append(f"acquire.{name}"),
         release=lambda _inputs, _value: calls.append(f"release.{name}"),
-        infrastructure=infrastructure,
+        always_release=always_release,
     )
 
 
@@ -440,68 +440,53 @@ def test_release_failure_alone_is_raised() -> None:
         workflow.run()
 
 
-def test_keep_infrastructure_retains_infra_but_releases_safety() -> None:
+def test_keep_retains_everything_that_did_not_ask_to_be_released() -> None:
+    """`keep` is about not paying to rebuild; `always_release` is about not
+    leaving something behind. A resource holding a secret declares the latter,
+    so the security property belongs to the resource, not to a classification
+    the caller has to get right."""
     calls: list[str] = []
-    vm = _resource("vm", calls, infrastructure=True)
-    port_forward = _resource("port-forward", calls)
-    workflow = _workflow(keep_infrastructure=True)
-    workflow.add(_RecordTask("Use", calls), requires=(vm, port_forward))
+    vm = _resource("vm", calls)
+    builder = _resource("builder", calls)
+    credentials = _resource("credentials", calls, always_release=True)
+    workflow = _workflow(keep=True)
+    workflow.add(_RecordTask("Use", calls), requires=(vm, builder, credentials))
 
     workflow.run()
 
-    assert calls == ["acquire.vm", "acquire.port-forward", "Use", "release.port-forward"]
+    assert calls == [
+        "acquire.vm",
+        "acquire.builder",
+        "acquire.credentials",
+        "Use",
+        "release.credentials",
+    ]
+
+
+def test_keep_releases_secrets_even_when_the_run_fails() -> None:
+    calls: list[str] = []
+    vm = _resource("vm", calls)
+    credentials = _resource("credentials", calls, always_release=True)
+    workflow = _workflow(keep=True)
+    workflow.add(_RecordTask("Boom", calls, fail=True), requires=(vm, credentials))
+
+    with pytest.raises(RuntimeError):
+        workflow.run()
+
+    assert "release.credentials" in calls
     assert "release.vm" not in calls
 
 
-def test_keep_infrastructure_retains_its_transitive_dependencies() -> None:
+def test_without_keep_everything_is_released() -> None:
     calls: list[str] = []
     vm = _resource("vm", calls)
-    helm = Resource(
-        title="Acquire helm",
-        acquire=lambda _inputs: calls.append("acquire.helm"),
-        release=lambda _inputs, _value: calls.append("release.helm"),
-        requires=(vm,),
-        infrastructure=True,
-    )
-    workflow = _workflow(keep_infrastructure=True)
-    workflow.add(_RecordTask("Use", calls), requires=(helm,))
+    credentials = _resource("credentials", calls, always_release=True)
+    workflow = _workflow()
+    workflow.add(_RecordTask("Use", calls), requires=(vm, credentials))
 
     workflow.run()
 
-    assert calls == ["acquire.vm", "acquire.helm", "Use"]
-
-
-def test_keep_infrastructure_retains_transitive_dependencies_after_failure() -> None:
-    calls: list[str] = []
-    vm = _resource("vm", calls)
-    helm = Resource(
-        title="Acquire helm",
-        acquire=lambda _inputs: calls.append("acquire.helm"),
-        release=lambda _inputs, _value: calls.append("release.helm"),
-        requires=(vm,),
-        infrastructure=True,
-    )
-    workflow = _workflow(keep_infrastructure=True)
-    workflow.add(_RecordTask("Boom", calls, fail=True), requires=(helm,))
-
-    with pytest.raises(RuntimeError, match="Boom failed"):
-        workflow.run()
-
-    assert calls == ["acquire.vm", "acquire.helm", "Boom"]
-
-
-def test_keep_infrastructure_still_releases_safety_after_failure() -> None:
-    calls: list[str] = []
-    vm = _resource("vm", calls, infrastructure=True)
-    port_forward = _resource("port-forward", calls)
-    workflow = _workflow(keep_infrastructure=True)
-    workflow.add(_RecordTask("Boom", calls, fail=True), requires=(vm, port_forward))
-
-    with pytest.raises(RuntimeError, match="Boom failed"):
-        workflow.run()
-
-    assert "release.port-forward" in calls
-    assert "release.vm" not in calls
+    assert calls[-2:] == ["release.credentials", "release.vm"]
 
 
 def test_acquired_resource_is_released_if_terminal_event_emission_fails() -> None:
@@ -569,10 +554,10 @@ def test_failed_journal_write_does_not_mask_task_error_or_cleanup(
     assert any("journal secondary" in note for note in exc_info.value.__notes__)
 
 
-def test_retained_infrastructure_emits_and_journals_skipped(tmp_path: Path) -> None:
+def test_retained_resource_emits_and_journals_skipped(tmp_path: Path) -> None:
     calls: list[str] = []
-    vm = _resource("vm", calls, infrastructure=True)
-    workflow = _workflow(keep_infrastructure=True)
+    vm = _resource("vm", calls)
+    workflow = _workflow(keep=True)
     workflow.add(_RecordTask("Use", calls), requires=(vm,))
     config = JournalConfig(tmp_path / "journal.jsonl")
     sink = _RecordingSink()
@@ -582,7 +567,13 @@ def test_retained_infrastructure_emits_and_journals_skipped(tmp_path: Path) -> N
 
     skipped_events = [event for event in sink.events if event.kind == "task.skipped"]
     assert [event.task_id for event in skipped_events] == ["003.release-vm"]
-    records = [json.loads(line) for line in config.path.read_text().splitlines() if line.strip()]
+    records = [
+        record
+        for record in (
+            json.loads(line) for line in config.path.read_text().splitlines() if line.strip()
+        )
+        if record.get("kind") != "retained"
+    ]
     release_statuses = [
         record["status"] for record in records if record["task_id"] == "003.release-vm"
     ]

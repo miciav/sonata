@@ -93,9 +93,26 @@ are acquired first, remain available to their lifecycle callbacks, and are relea
 after their dependents. A consumer declares only the resources it uses directly.
 Dependency cycles fail compilation with `ResourceDependencyCycleError`.
 
-With `Workflow(keep_infrastructure=True)`, every `infrastructure=True` resource and
-all of its transitive dependencies are retained. This prevents the engine from
-keeping a deployment while releasing the VM or cluster it still depends on.
+With `Workflow(keep=True)`, every resource is retained except those declaring
+`always_release=True`. Retention is opt-out because the two questions it used to
+conflate are unrelated: whether a resource is expensive to rebuild, and whether
+it is safe to leave behind. A resource holding a secret — a staged token, a
+signing key, an open credential lease — declares `always_release`, so leaving one
+behind stops being something a caller can cause by forgetting to classify it.
+
+Each retained resource is written to the journal with its acquired value, and
+`release_retained(resources, journal)` releases them from a later process:
+
+```python
+from sonata_engine import release_retained
+
+release_retained({vm.title: vm}, JournalConfig(path))
+```
+
+Values are journaled as JSON, so a resource whose value cannot be encoded is
+released rather than retained — a retention the journal cannot record is a
+promise it cannot keep. `Resource.revive` rebuilds a dataclass value from its
+record, since a release written against one would break on a dict.
 
 `acquire_idempotent=False` is the safe default: a failed or interrupted acquire is
 ambiguous and resume refuses to retry it automatically.

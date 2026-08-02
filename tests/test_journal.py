@@ -12,7 +12,7 @@ from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
 from sonata_engine.errors import CorruptJournalError, WorkflowTopologyMismatchError
-from sonata_engine.journal import JournalConfig
+from sonata_engine.journal import SCHEMA_VERSION, JournalConfig
 
 
 class _Ok(Task[None]):
@@ -61,7 +61,12 @@ class _Replacement(Task[None]):
 
 
 def _records(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    """Task records only -- retention records carry no task_id."""
+    return [
+        record
+        for record in (json.loads(line) for line in path.read_text().splitlines() if line.strip())
+        if record.get("kind") != "retained"
+    ]
 
 
 def _five_task_workflow() -> Workflow:
@@ -117,7 +122,7 @@ def test_unreachable_task_remains_in_journal_topology(tmp_path: Path) -> None:
     assert [record["status"] for record in unreachable] == ["pending"]
 
 
-def test_retained_infrastructure_finalizer_is_journaled_as_skipped(
+def test_retained_resource_finalizer_is_journaled_as_skipped(
     tmp_path: Path,
 ) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
@@ -125,9 +130,8 @@ def test_retained_infrastructure_finalizer_is_journaled_as_skipped(
         title="Acquire cluster",
         acquire=lambda _inputs: None,
         release=lambda _inputs, _value: None,
-        infrastructure=True,
     )
-    workflow = Workflow(workflow_id="wf", keep_infrastructure=True)
+    workflow = Workflow(workflow_id="wf", keep=True)
     workflow.add(_Ok("Use cluster"), requires=(resource,))
 
     workflow.run(journal=config)
@@ -193,7 +197,7 @@ def test_record_without_fingerprint_is_not_backward_compatible(tmp_path: Path) -
     config.path.write_text(
         json.dumps(
             {
-                "schema_version": 2,
+                "schema_version": SCHEMA_VERSION,
                 "workflow_id": "wf",
                 "run_id": "legacy",
                 "task_id": "001.build",
@@ -221,7 +225,7 @@ def test_five_tasks_produce_five_logical_entries(tmp_path: Path) -> None:
 
     records = _records(config.path)
     assert len({r["task_id"] for r in records}) == 5
-    assert all(r["schema_version"] == 2 for r in records)
+    assert all(r["schema_version"] == SCHEMA_VERSION for r in records)
     assert all(r["workflow_fingerprint"].startswith("sha256:") for r in records)
     assert len([r for r in records if r["status"] == "pending"]) == 5
     assert len([r for r in records if r["status"] == "started"]) == 5
@@ -363,7 +367,7 @@ def test_load_ignores_only_an_incomplete_final_json_line(tmp_path: Path) -> None
     workflow.run(journal=config)
 
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write('{"schema_version":2,"workflow_id":"wf"')
+        handle.write(f'{{"schema_version":{SCHEMA_VERSION},"workflow_id":"wf"')
 
     workflow.run(journal=config)
 
@@ -447,3 +451,58 @@ def test_no_journal_writes_no_file(tmp_path: Path) -> None:
     workflow.run()  # journal is optional
 
     assert not path.exists()
+
+
+def _kept(tmp_path: Path, value: object, *, always_release: bool = False):
+    """One kept run holding a single resource; returns (calls, journal path)."""
+    calls: list[str] = []
+    resource = Resource(
+        title="Acquire vm",
+        acquire=lambda _inputs: value,
+        release=lambda _inputs, released: calls.append(f"release:{released}"),
+        always_release=always_release,
+    )
+    workflow = Workflow(workflow_id="wf", keep=True)
+    workflow.add(_Ok("Use"), requires=(resource,))
+    path = tmp_path / "journal.jsonl"
+    workflow.run(journal=JournalConfig(path))
+    return calls, path
+
+
+def _retained_records(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("kind") == "retained"
+    ]
+
+
+def test_a_retained_resource_records_its_acquired_value(tmp_path: Path) -> None:
+    """A later process has no _RunState, so the value release() needs must be in
+    the journal or the resource can never be released again."""
+    calls, path = _kept(tmp_path, {"name": "stack", "host": "10.0.0.1"})
+
+    assert calls == []
+    records = _retained_records(path)
+    assert len(records) == 1
+    assert records[0]["resource"] == "Acquire vm"
+    assert records[0]["value"] == {"name": "stack", "host": "10.0.0.1"}
+
+
+def test_an_always_release_resource_is_never_recorded_as_retained(tmp_path: Path) -> None:
+    calls, path = _kept(tmp_path, {"token": "secret"}, always_release=True)
+
+    assert calls == ["release:{'token': 'secret'}"]
+    assert _retained_records(path) == []
+
+
+def test_an_unjournalable_value_is_released_rather_than_silently_stranded(
+    tmp_path: Path,
+) -> None:
+    """Retention is a promise that a later teardown can finish the job. When the
+    value cannot be written down that promise cannot be kept, so releasing now is
+    the only outcome that leaves nothing unmanaged."""
+    calls, path = _kept(tmp_path, object())
+
+    assert len(calls) == 1
+    assert _retained_records(path) == []

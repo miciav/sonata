@@ -152,10 +152,12 @@ class Workflow:
     """Ordered workflow builder, compiler, and executor."""
 
     workflow_id: str
-    keep_infrastructure: bool = False
+    keep: bool = False
     _definitions: list[tuple[Task[Any], tuple[Resource, ...]]] = field(
         default_factory=list, init=False, repr=False
     )
+    # Position of each retention record, so a teardown can release in reverse.
+    _retention_order: int = field(default=0, init=False, repr=False)
 
     def run(
         self,
@@ -200,13 +202,14 @@ class Workflow:
         Failure path: when a consumer or acquire raises, we stop the main walk and run
         the release unit for every resource acquired-but-not-yet-released, in reverse
         acquisition order. Release errors never abort remaining releases; they are
-        collected and combined with the primary error. `keep_infrastructure` skips a
-        release only when its `Resource` is `infrastructure`.
+        collected and combined with the primary error. `keep` skips every release
+        except those whose `Resource` sets `always_release`.
         """
         if resume and journal is None:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
         jrnl = Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
 
+        self._retention_order = 0
         release_for = {
             id(task.resource): task
             for task in compiled.tasks
@@ -285,27 +288,22 @@ class Workflow:
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
     def _retained_resources(self, compiled: CompiledWorkflow) -> frozenset[int]:
-        """Infrastructure resources and the dependencies that keep them usable."""
-        if not self.keep_infrastructure:
+        """Everything `keep` holds on to: all of it but what asked to be released.
+
+        No dependency walk any more. Retention used to be opt-in, so keeping a
+        resource meant also keeping whatever made it usable; now it is opt-out,
+        so the only resources released under `keep` are the ones that said so,
+        and they are released in the same reverse order as always.
+        """
+        if not self.keep:
             return frozenset()
-        retained: set[int] = set()
-
-        def retain(resource: Resource[Any]) -> None:
-            resource_id = id(resource)
-            if resource_id in retained:
-                return
-            retained.add(resource_id)
-            for dependency in resource.requires:
-                retain(dependency)
-
-        for task in compiled.tasks:
-            if (
-                task.kind == "acquire"
-                and task.resource is not None
-                and task.resource.infrastructure
-            ):
-                retain(task.resource)
-        return frozenset(retained)
+        return frozenset(
+            id(task.resource)
+            for task in compiled.tasks
+            if task.kind == "acquire"
+            and task.resource is not None
+            and not task.resource.always_release
+        )
 
     def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
         return jrnl.next_attempt(task_id) if jrnl is not None else 0
@@ -383,13 +381,25 @@ class Workflow:
         jrnl: Journal | None = None,
         retained_resources: frozenset[int] = frozenset(),
     ) -> TaskExecution | None:
-        """Run one release unit, honoring infrastructure retention, collecting errors.
+        """Run one release unit, honoring retention, collecting errors.
 
         A release is a non-reusable finalizer: it always runs, never consults prior
         state, but its outcome is still recorded when a journal is configured.
         """
         resource = compiled_task.resource
         if resource is not None and id(resource) in retained_resources:
+            # Retention is a promise that a later run can finish the job, and that
+            # run will have no `_RunState`. If the value cannot be written down the
+            # promise cannot be kept, so fall through and release now: a resource
+            # held with no way to release it is worse than one released early.
+            if jrnl is not None and not jrnl.record_retained(
+                resource.title,
+                self._retention_order,
+                state.values.get(id(resource)),
+            ):
+                retained_resources = frozenset()
+        if resource is not None and id(resource) in retained_resources:
+            self._retention_order += 1
             if jrnl is not None:
                 self._record_release_outcome(
                     release_errors,

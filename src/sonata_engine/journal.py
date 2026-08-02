@@ -10,6 +10,7 @@ registries, or artifact policy (those do not belong in Sonata).
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -31,7 +32,27 @@ from sonata_engine.errors import (
     WorkflowTopologyMismatchError,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+
+def _jsonable(value: object) -> object:
+    """A JSON view of an acquired resource value, or TypeError if there is none.
+
+    Deliberately narrow. Dataclasses are the common shape for resource values (a
+    VM's info, an endpoint pair) so they convert; everything else must already be
+    a JSON primitive. A value needing custom encoding is one a later process
+    could not faithfully reconstruct either, and pretending otherwise is how a
+    resource ends up retained with no way to release it.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    raise TypeError(f"resource value is not journalable: {type(value).__name__}")
 
 Verifier = Callable[[Evidence], bool]
 ResumeAction = Literal["run", "skip"]
@@ -194,6 +215,7 @@ class Journal:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # started_at captured per attempt so the terminal record can repeat it.
         self._started_at: dict[tuple[str, int], str] = {}
+        self._retained: list[dict[str, Any]] = []
         self._states = self._load()
         for task in compiled.tasks:
             if task.task_id not in self._states:
@@ -258,6 +280,11 @@ class Journal:
                         "journals -- see README.md)",
                         stacklevel=2,
                     )
+                continue
+            if record.get("kind") == "retained":
+                # Resource retention, not a task outcome: no task_id, no part in
+                # resume decisions. `release_retained` is what reads these back.
+                self._retained.append(record)
                 continue
             try:
                 task_id = str(record["task_id"])
@@ -326,6 +353,35 @@ class Journal:
         prior = self._states.get(task_id)
         evidence = prior.evidence if prior is not None else ()
         self._write(task_id, attempt, "skipped", finished_at=_utc_iso(), evidence=evidence)
+
+    def record_retained(self, resource_title: str, order: int, value: object) -> bool:
+        """Write down a resource `keep` held on to, with the value release() needs.
+
+        A later process has no `_RunState`, so this record is its only way to ever
+        release the resource. Returns False when the value cannot be written down:
+        the caller must then release it now rather than strand it, because a
+        retention it cannot record is a promise it cannot keep.
+        """
+        try:
+            encoded = _jsonable(value)
+            json.dumps(encoded, separators=(",", ":"))
+        except (TypeError, ValueError):
+            return False
+        record = {
+            "schema_version": SCHEMA_VERSION,
+            "workflow_id": self.workflow_id,
+            "workflow_fingerprint": self.workflow_fingerprint,
+            "run_id": self.run_id,
+            "kind": "retained",
+            "resource": resource_title,
+            "order": order,
+            "value": encoded,
+        }
+        with open(self.path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        return True
 
     def _write(
         self,
