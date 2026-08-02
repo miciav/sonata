@@ -19,10 +19,9 @@ from sonata_engine.errors import (
     UnsupportedJournalSchemaError,
     WorkflowTopologyMismatchError,
 )
-from sonata_engine.journal import Journal, JournalConfig
+from sonata_engine.journal import SCHEMA_VERSION, Journal, JournalConfig
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
-from sonata_engine.journal import SCHEMA_VERSION
 
 
 class _Tracker(Task[None]):
