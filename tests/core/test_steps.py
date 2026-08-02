@@ -22,6 +22,7 @@ from sonata_engine.errors import (
     InvalidTaskOutcomeError,
     NoUpstreamValueError,
 )
+from sonata_engine.journal import SCHEMA_VERSION
 
 
 class _Produce(Task[str]):
@@ -236,7 +237,7 @@ def _seed_step(
     """Append one journal record for a step, following the shape `Journal`
     reads (see `tests/test_resume.py::_seed` for the top-level-task twin)."""
     record = {
-        "schema_version": 2,
+        "schema_version": SCHEMA_VERSION,
         "workflow_id": workflow_id,
         "workflow_fingerprint": workflow_fingerprint,
         "run_id": "seed",

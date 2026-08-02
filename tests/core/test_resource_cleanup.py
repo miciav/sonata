@@ -567,7 +567,13 @@ def test_retained_resource_emits_and_journals_skipped(tmp_path: Path) -> None:
 
     skipped_events = [event for event in sink.events if event.kind == "task.skipped"]
     assert [event.task_id for event in skipped_events] == ["003.release-vm"]
-    records = [json.loads(line) for line in config.path.read_text().splitlines() if line.strip()]
+    records = [
+        record
+        for record in (
+            json.loads(line) for line in config.path.read_text().splitlines() if line.strip()
+        )
+        if record.get("kind") != "retained"
+    ]
     release_statuses = [
         record["status"] for record in records if record["task_id"] == "003.release-vm"
     ]

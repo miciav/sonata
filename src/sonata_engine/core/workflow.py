@@ -156,6 +156,8 @@ class Workflow:
     _definitions: list[tuple[Task[Any], tuple[Resource, ...]]] = field(
         default_factory=list, init=False, repr=False
     )
+    # Position of each retention record, so a teardown can release in reverse.
+    _retention_order: int = field(default=0, init=False, repr=False)
 
     def run(
         self,
@@ -207,6 +209,7 @@ class Workflow:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
         jrnl = Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
 
+        self._retention_order = 0
         release_for = {
             id(task.resource): task
             for task in compiled.tasks
@@ -385,6 +388,18 @@ class Workflow:
         """
         resource = compiled_task.resource
         if resource is not None and id(resource) in retained_resources:
+            # Retention is a promise that a later run can finish the job, and that
+            # run will have no `_RunState`. If the value cannot be written down the
+            # promise cannot be kept, so fall through and release now: a resource
+            # held with no way to release it is worse than one released early.
+            if jrnl is not None and not jrnl.record_retained(
+                resource.title,
+                self._retention_order,
+                state.values.get(id(resource)),
+            ):
+                retained_resources = frozenset()
+        if resource is not None and id(resource) in retained_resources:
+            self._retention_order += 1
             if jrnl is not None:
                 self._record_release_outcome(
                     release_errors,
