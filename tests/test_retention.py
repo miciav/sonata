@@ -92,15 +92,17 @@ def test_a_second_teardown_is_a_no_op(tmp_path: Path) -> None:
 
 def test_a_retained_resource_the_caller_cannot_build_is_reported(tmp_path: Path) -> None:
     """Silently skipping it would report a clean teardown while the thing keeps
-    running -- the failure mode this whole feature exists to remove."""
+    running. Refusing outright would be worse: the resources the caller *did*
+    supply are usually the expensive ones, and they would stay up too."""
     calls: list[str] = []
     stack = _resource("Acquire stack", "s", calls)
-    path = _kept_run(tmp_path, (stack,), calls)
+    orphan = _resource("Acquire orphan", "o", calls)
+    path = _kept_run(tmp_path, (stack, orphan), calls)
 
-    with pytest.raises(UnknownRetainedResourceError, match="Acquire stack"):
-        release_retained({}, JournalConfig(path))
+    with pytest.raises(UnknownRetainedResourceError, match="Acquire orphan"):
+        release_retained({stack.title: stack}, JournalConfig(path))
 
-    assert calls == []
+    assert calls == ["Acquire stack:s"]
 
 
 def test_one_failing_release_does_not_strand_the_others(tmp_path: Path) -> None:

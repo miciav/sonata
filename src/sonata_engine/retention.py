@@ -62,6 +62,10 @@ def release_retained(
 ) -> tuple[str, ...]:
     """Release every resource the journal still records as retained.
 
+    Resources the caller does not supply are released by nobody, but everything
+    else still is: they are reported at the end rather than refused up front,
+    because refusing would leave the supplied ones running too.
+
     Released in the order the records were written, which is already the order a
     run itself would have used: release units are spliced in reverse of
     acquisition, so the retention counter recorded them reverse-acquired. Every
@@ -75,25 +79,19 @@ def release_retained(
     if not outstanding:
         return ()
 
-    missing = sorted(
-        {
-            str(record.get("resource"))
-            for record in outstanding
-            if str(record.get("resource")) not in resources
-        }
-    )
-    if missing:
-        raise UnknownRetainedResourceError(
-            "journal records retained resources the caller did not supply: "
-            + ", ".join(missing)
-        )
-
     inputs = TaskInputs._for_resource_values({}, ())  # noqa: SLF001
     errors: list[BaseException] = []
     released: list[str] = []
+    unknown: list[str] = []
     for record in sorted(outstanding, key=lambda item: int(item.get("order", 0))):
         title = str(record["resource"])
-        resource = resources[title]
+        resource = resources.get(title)
+        if resource is None:
+            # Release what we can and say what we could not. Refusing outright
+            # would leave everything running -- including the resources the
+            # caller *did* supply, which are usually the expensive ones.
+            unknown.append(title)
+            continue
         value = record.get("value")
         try:
             if resource.revive is not None:
@@ -104,6 +102,14 @@ def release_retained(
             continue
         _record_released(journal, record, title)
         released.append(title)
+
+    if unknown:
+        errors.append(
+            UnknownRetainedResourceError(
+                "journal records retained resources the caller did not supply: "
+                + ", ".join(sorted(unknown))
+            )
+        )
 
     if errors:
         if len(errors) == 1:
