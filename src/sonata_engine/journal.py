@@ -232,30 +232,9 @@ class Journal:
             line_start = offset
             offset += len(raw_line)
             is_torn_tail = index == len(lines) - 1 and not raw_line.endswith((b"\n", b"\r"))
-            try:
-                line = raw_line.decode("utf-8")
-            except UnicodeError as exc:
-                if is_torn_tail:
-                    self._truncate_torn_tail(line_start)
-                    break
-                raise CorruptJournalError(
-                    f"{self.path}:{index + 1}: record is not valid UTF-8"
-                ) from exc
-            if not line.strip():
+            record = self._parse_record(raw_line, index, is_torn_tail, line_start)
+            if record is None:
                 continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                if is_torn_tail:
-                    self._truncate_torn_tail(line_start)
-                    break
-                raise CorruptJournalError(
-                    f"{self.path}:{index + 1}: malformed JSON record"
-                ) from exc
-            if not isinstance(record, dict):
-                raise CorruptJournalError(
-                    f"{self.path}:{index + 1}: journal record must be an object"
-                )
             version = record.get("schema_version")
             if version != SCHEMA_VERSION:
                 raise UnsupportedJournalSchemaError(
@@ -286,31 +265,73 @@ class Journal:
                 # resume decisions. `release_retained` is what reads these back.
                 self._retained.append(record)
                 continue
-            try:
-                task_id = str(record["task_id"])
-                attempt = int(record["attempt"])
-                status = str(record["status"])
-                raw_evidence = record.get("evidence", [])
-                evidence = _evidence_from_json(raw_evidence)
-            except (KeyError, TypeError, ValueError) as exc:
-                raise CorruptJournalError(
-                    f"{self.path}:{index + 1}: malformed journal record"
-                ) from exc
-            if status not in {"pending", "started", "passed", "failed", "skipped"}:
-                raise CorruptJournalError(
-                    f"{self.path}:{index + 1}: invalid task status {status!r}"
-                )
-            existing = states.get(task_id)
-            # Records are appended in order: a later record for the same (or higher)
-            # attempt supersedes an earlier one -- terminal replaces started.
-            if existing is None or attempt >= existing.attempt:
-                states[task_id] = TaskState(
-                    task_id=task_id,
-                    attempt=attempt,
-                    status=status,
-                    evidence=evidence,
-                )
+            self._fold_record(record, index, states)
         return states
+
+    def _parse_record(
+        self, raw_line: bytes, index: int, is_torn_tail: bool, line_start: int
+    ) -> dict[str, Any] | None:
+        """Decode and parse one journal line; None for a blank line or torn tail.
+
+        A torn tail (crash mid-write) is truncated and dropped. Any other
+        malformed line raises `CorruptJournalError`.
+        """
+        try:
+            line = raw_line.decode("utf-8")
+        except UnicodeError as exc:
+            if is_torn_tail:
+                self._truncate_torn_tail(line_start)
+                return None
+            raise CorruptJournalError(
+                f"{self.path}:{index + 1}: record is not valid UTF-8"
+            ) from exc
+        if not line.strip():
+            return None
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            if is_torn_tail:
+                self._truncate_torn_tail(line_start)
+                return None
+            raise CorruptJournalError(
+                f"{self.path}:{index + 1}: malformed JSON record"
+            ) from exc
+        if not isinstance(record, dict):
+            raise CorruptJournalError(
+                f"{self.path}:{index + 1}: journal record must be an object"
+            )
+        return record
+
+    def _fold_record(
+        self, record: dict[str, Any], index: int, states: dict[str, TaskState]
+    ) -> None:
+        """Merge one task-outcome record into `states`; raises on malformed data.
+
+        Records are appended in order: a later record for the same (or higher)
+        attempt supersedes an earlier one -- terminal replaces started.
+        """
+        try:
+            task_id = str(record["task_id"])
+            attempt = int(record["attempt"])
+            status = str(record["status"])
+            raw_evidence = record.get("evidence", [])
+            evidence = _evidence_from_json(raw_evidence)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CorruptJournalError(
+                f"{self.path}:{index + 1}: malformed journal record"
+            ) from exc
+        if status not in {"pending", "started", "passed", "failed", "skipped"}:
+            raise CorruptJournalError(
+                f"{self.path}:{index + 1}: invalid task status {status!r}"
+            )
+        existing = states.get(task_id)
+        if existing is None or attempt >= existing.attempt:
+            states[task_id] = TaskState(
+                task_id=task_id,
+                attempt=attempt,
+                status=status,
+                evidence=evidence,
+            )
 
     def _truncate_torn_tail(self, offset: int) -> None:
         """Remove only a non-newline-terminated final record after a crash."""
