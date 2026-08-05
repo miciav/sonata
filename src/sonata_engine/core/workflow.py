@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 from sonata_engine.core.compiled import (
     CompiledTask,
@@ -143,10 +143,13 @@ class _StepScope:
         step_id = f"{self.prefix}/{slug}"
 
         def make_inputs() -> TaskInputs:
-            return replace(
-                self.base_inputs,
-                _upstream=upstream,
-                _step_scope=replace(self, prefix=step_id),
+            return cast(
+                TaskInputs,
+                replace(
+                    self.base_inputs,
+                    _upstream=upstream,
+                    _step_scope=replace(self, prefix=step_id),
+                ),
             )
 
         return _execute_recorded(
@@ -409,13 +412,16 @@ class Workflow:
                 if compiled_task.kind == "acquire" and compiled_task.resource is not None
                 else compiled_task.required_resources
             )
-            return replace(
-                base,
-                _step_scope=_StepScope(
-                    prefix=compiled_task.task_id,
-                    base_inputs=base,
-                    jrnl=jrnl,
-                    resume=resume,
+            return cast(
+                TaskInputs,
+                replace(
+                    base,
+                    _step_scope=_StepScope(
+                        prefix=compiled_task.task_id,
+                        base_inputs=base,
+                        jrnl=jrnl,
+                        resume=resume,
+                    ),
                 ),
             )
 
