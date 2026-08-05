@@ -580,6 +580,34 @@ def test_retained_resource_emits_and_journals_skipped(tmp_path: Path) -> None:
     assert release_statuses == ["pending", "skipped"]
 
 
+def test_keep_releases_when_the_retained_value_cannot_be_journaled(tmp_path: Path) -> None:
+    """A retention that cannot be written down is a promise that cannot be
+    kept: the resource is released now rather than held with no way to
+    release it."""
+    calls: list[str] = []
+    vm = Resource(
+        title="Acquire vm",
+        acquire=lambda _inputs: {"1.2.3.4"},
+        release=lambda _inputs, _value: calls.append("release.vm"),
+    )
+    workflow = _workflow(keep=True)
+    workflow.add(_RecordTask("Use", calls), requires=(vm,))
+
+    workflow.run(journal=JournalConfig(tmp_path / "journal.jsonl"))
+
+    assert "release.vm" in calls
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "journal.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert [record.get("kind") for record in records].count("retained") == 0
+    release_statuses = [
+        record["status"] for record in records if record["task_id"] == "003.release-vm"
+    ]
+    assert release_statuses == ["pending", "started", "passed"]
+
+
 def test_all_finalizers_run_after_release_and_journal_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

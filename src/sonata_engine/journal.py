@@ -227,6 +227,8 @@ class Journal:
             return states
         lines = self.path.read_bytes().splitlines(keepends=True)
         offset = 0
+        # _load runs exactly once per Journal instance (from __init__), so the
+        # warn-once flag is per-instance; a future second load would warn again.
         self._warned_mismatch = False
         for index, raw_line in enumerate(lines):
             line_start = offset
