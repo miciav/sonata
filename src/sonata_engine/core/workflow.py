@@ -62,6 +62,19 @@ def _resolve_slug(slugs: list[str], wanted: str) -> int:
     return matches[0]
 
 
+def _maybe_resume_skip(
+    *, task_id: str, task: Task[Any], jrnl: Journal | None, resume: bool
+) -> TaskExecution | None:
+    """The 'skipped' execution when resume says skip; None otherwise."""
+    if jrnl is None or not resume:
+        return None
+    if jrnl.decide_task(task_id, task) != "skip":
+        return None
+    jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
+    _task_skipped(task_id=task_id, title=task.title)
+    return TaskExecution(task_id=task_id, status="skipped", outcome=None)
+
+
 def _execute_recorded(
     *,
     task: Task[Any],
@@ -82,11 +95,9 @@ def _execute_recorded(
     lifecycle -- a failure resolving resources must be reported as a task
     failure, not escape unreported.
     """
-    if jrnl is not None and resume:
-        if jrnl.decide_task(task_id, task) == "skip":
-            jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-            _task_skipped(task_id=task_id, title=task.title)
-            return TaskExecution(task_id=task_id, status="skipped", outcome=None)
+    skip = _maybe_resume_skip(task_id=task_id, task=task, jrnl=jrnl, resume=resume)
+    if skip is not None:
+        return skip
 
     attempt = jrnl.next_attempt(task_id) if jrnl is not None else 0
     if jrnl is not None:
