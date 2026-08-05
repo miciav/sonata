@@ -234,16 +234,16 @@ class Workflow:
         executions: list[TaskExecution] = []
         state = _RunState()
 
-        for compiled_task in compiled.tasks:
-            if compiled_task.kind == "release":
-                execution = self._release(
-                    compiled_task, release_errors, state, jrnl, retained_resources
-                )
-                if execution is not None:
-                    executions.append(execution)
-                pending = [p for p in pending if p is not compiled_task]
-                continue
-            try:
+        try:
+            for compiled_task in compiled.tasks:
+                if compiled_task.kind == "release":
+                    execution = self._release(
+                        compiled_task, release_errors, state, jrnl, retained_resources
+                    )
+                    if execution is not None:
+                        executions.append(execution)
+                    pending = [p for p in pending if p is not compiled_task]
+                    continue
                 on_executed = None
                 if compiled_task.kind == "acquire":
                     resource = compiled_task.resource
@@ -260,42 +260,12 @@ class Workflow:
                         on_executed=on_executed,
                     )
                 )
-            except BaseException as exc:
-                main_error = exc
-                break
+        except BaseException as exc:
+            main_error = exc
 
         if main_error is not None:
-            for compiled_task in reversed(pending):
-                self._release(compiled_task, release_errors, state, jrnl, retained_resources)
-
-        critical_error = (
-            main_error
-            if main_error is not None and not isinstance(main_error, Exception)
-            else next(
-                (error for error in release_errors if not isinstance(error, Exception)),
-                None,
-            )
-        )
-        if critical_error is not None:
-            if main_error is not None and main_error is not critical_error:
-                critical_error.add_note(f"Task error: {main_error}")
-            for error in release_errors:
-                if error is not critical_error:
-                    critical_error.add_note(f"Cleanup error: {error}")
-            raise critical_error
-
-        if main_error is not None:
-            if release_errors:
-                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
-                    str(error) for error in release_errors
-                )
-                raise RuntimeError(combined) from main_error
-            raise main_error
-
-        if release_errors:
-            raise RuntimeError(
-                "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
-            )
+            self._release_pending(pending, release_errors, state, jrnl, retained_resources)
+        self._raise_final(main_error, release_errors)
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
     def _retained_resources(self, compiled: CompiledWorkflow) -> frozenset[int]:
@@ -315,6 +285,50 @@ class Workflow:
             and task.resource is not None
             and not task.resource.always_release
         )
+
+    def _release_pending(
+        self,
+        pending: list[CompiledTask[object]],
+        release_errors: list[BaseException],
+        state: _RunState,
+        jrnl: Journal | None,
+        retained_resources: frozenset[int],
+    ) -> None:
+        """Run every pending release in reverse acquisition order."""
+        for compiled_task in reversed(pending):
+            self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+
+    def _raise_final(
+        self, main_error: BaseException | None, release_errors: list[BaseException]
+    ) -> None:
+        """Raise the run's outcome: critical errors first, then the primary
+        error with cleanup notes, else the collected cleanup errors."""
+        critical_error = (
+            main_error
+            if main_error is not None and not isinstance(main_error, Exception)
+            else next(
+                (error for error in release_errors if not isinstance(error, Exception)),
+                None,
+            )
+        )
+        if critical_error is not None:
+            if main_error is not None and main_error is not critical_error:
+                critical_error.add_note(f"Task error: {main_error}")
+            for error in release_errors:
+                if error is not critical_error:
+                    critical_error.add_note(f"Cleanup error: {error}")
+            raise critical_error
+        if main_error is not None:
+            if release_errors:
+                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
+                    str(error) for error in release_errors
+                )
+                raise RuntimeError(combined) from main_error
+            raise main_error
+        if release_errors:
+            raise RuntimeError(
+                "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
+            )
 
     def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
         return jrnl.next_attempt(task_id) if jrnl is not None else 0
