@@ -227,7 +227,7 @@ class Journal:
             return states
         lines = self.path.read_bytes().splitlines(keepends=True)
         offset = 0
-        warned_mismatch = False
+        self._warned_mismatch = False
         for index, raw_line in enumerate(lines):
             line_start = offset
             offset += len(raw_line)
@@ -242,23 +242,7 @@ class Journal:
                 )
             if record.get("workflow_id") != self.workflow_id:
                 continue
-            fingerprint = record.get("workflow_fingerprint")
-            if fingerprint != self.workflow_fingerprint:
-                if self._resume:
-                    raise WorkflowTopologyMismatchError(
-                        f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
-                        f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
-                    )
-                if not warned_mismatch:
-                    warned_mismatch = True
-                    warnings.warn(
-                        f"{self.path}: existing journal records for workflow "
-                        f"{self.workflow_id!r} have fingerprint {fingerprint!r}, expected "
-                        f"{self.workflow_fingerprint!r}; ignoring them and appending a new "
-                        "topology to the same file (a Sonata upgrade invalidates prior "
-                        "journals -- see README.md)",
-                        stacklevel=2,
-                    )
+            if self._check_fingerprint(record):
                 continue
             if record.get("kind") == "retained":
                 # Resource retention, not a task outcome: no task_id, no part in
@@ -267,6 +251,33 @@ class Journal:
                 continue
             self._fold_record(record, index, states)
         return states
+
+    def _check_fingerprint(self, record: dict[str, Any]) -> bool:
+        """True when the record's fingerprint mismatches and it must be skipped.
+
+        On resume a mismatch refuses the journal (WorkflowTopologyMismatchError).
+        Otherwise it warns once per load and ignores the mismatched records (a
+        Sonata upgrade invalidates prior journals -- see README.md).
+        """
+        fingerprint = record.get("workflow_fingerprint")
+        if fingerprint == self.workflow_fingerprint:
+            return False
+        if self._resume:
+            raise WorkflowTopologyMismatchError(
+                f"{self.path}: workflow {self.workflow_id!r} has fingerprint "
+                f"{fingerprint!r}, expected {self.workflow_fingerprint!r}"
+            )
+        if not self._warned_mismatch:
+            self._warned_mismatch = True
+            warnings.warn(
+                f"{self.path}: existing journal records for workflow "
+                f"{self.workflow_id!r} have fingerprint {fingerprint!r}, expected "
+                f"{self.workflow_fingerprint!r}; ignoring them and appending a new "
+                "topology to the same file (a Sonata upgrade invalidates prior "
+                "journals -- see README.md)",
+                stacklevel=2,
+            )
+        return True
 
     def _parse_record(
         self, raw_line: bytes, index: int, is_torn_tail: bool, line_start: int

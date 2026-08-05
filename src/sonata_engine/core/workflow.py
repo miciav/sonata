@@ -289,27 +289,25 @@ class Workflow:
         try:
             for compiled_task in compiled.tasks:
                 if compiled_task.kind == "release":
-                    execution = self._release(
-                        compiled_task, release_errors, state, jrnl, retained_resources
+                    self._run_release_step(
+                        compiled_task,
+                        executions,
+                        pending,
+                        release_errors,
+                        state,
+                        jrnl,
+                        retained_resources,
                     )
-                    if execution is not None:
-                        executions.append(execution)
-                    pending = [p for p in pending if p is not compiled_task]
                     continue
-                on_executed = None
-                if compiled_task.kind == "acquire":
-                    resource = compiled_task.resource
-                    if resource is None:
-                        raise RuntimeError("acquire task has no resource")
-                    release_task = release_for[id(resource)]
-                    on_executed = partial(pending.append, release_task)
                 executions.append(
                     self._run_unit(
                         compiled_task,
                         jrnl,
                         state,
                         resume=resume,
-                        on_executed=on_executed,
+                        on_executed=self._on_executed_for(
+                            compiled_task, release_for, pending
+                        ),
                     )
                 )
         except BaseException as exc:  # NOSONAR S5754 - stop the walk so pending releases can run; re-raised by _raise_final  # noqa: E501
@@ -349,6 +347,36 @@ class Workflow:
         """Run every pending release in reverse acquisition order."""
         for compiled_task in reversed(pending):
             self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+
+    def _run_release_step(
+        self,
+        compiled_task: CompiledTask[object],
+        executions: list[TaskExecution],
+        pending: list[CompiledTask[object]],
+        release_errors: list[BaseException],
+        state: _RunState,
+        jrnl: Journal | None,
+        retained_resources: frozenset[int],
+    ) -> None:
+        """Run one release unit in the main walk, collecting its outcome."""
+        execution = self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+        if execution is not None:
+            executions.append(execution)
+        pending[:] = [p for p in pending if p is not compiled_task]
+
+    def _on_executed_for(
+        self,
+        compiled_task: CompiledTask[object],
+        release_for: Mapping[int, CompiledTask[object]],
+        pending: list[CompiledTask[object]],
+    ) -> Callable[[], None] | None:
+        """The release-unit callback for an acquire unit; None for consumers."""
+        if compiled_task.kind != "acquire":
+            return None
+        resource = compiled_task.resource
+        if resource is None:
+            raise RuntimeError("acquire task has no resource")
+        return partial(pending.append, release_for[id(resource)])
 
     def _raise_final(
         self, main_error: BaseException | None, release_errors: list[BaseException]
