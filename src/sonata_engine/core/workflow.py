@@ -120,7 +120,7 @@ def _execute_recorded(
         if jrnl is not None:
             try:
                 jrnl.record_failed(task_id, attempt)
-            except BaseException as journal_error:
+            except OSError as journal_error:
                 exc.add_note(f"Failed to record task failure: {journal_error}")
         raise
     if jrnl is not None:
@@ -312,7 +312,7 @@ class Workflow:
                         on_executed=on_executed,
                     )
                 )
-        except BaseException as exc:
+        except BaseException as exc:  # NOSONAR S5754 - stop the walk so pending releases can run; re-raised by _raise_final  # noqa: E501
             main_error = exc
 
         if main_error is not None:
@@ -492,7 +492,7 @@ class Workflow:
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
                     )
-        except BaseException as exc:
+        except BaseException as exc:  # NOSONAR S5754 - collect the failure; every pending release must still run  # noqa: E501
             release_errors.append(exc)
             if jrnl is not None:
                 self._record_release_outcome(
@@ -543,7 +543,7 @@ class Workflow:
             )
         try:
             _task_skipped(task_id=compiled_task.task_id, title=compiled_task.task.title)
-        except BaseException as exc:
+        except BaseException as exc:  # NOSONAR S5754 - a reporting failure must not abort the retention skip  # noqa: E501
             release_errors.append(exc)
         state.remove(resource)
         return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)

@@ -97,7 +97,7 @@ def release_retained(
             if resource.revive is not None:
                 value = resource.revive(value)
             resource.release(inputs, value)
-        except BaseException as error:  # noqa: BLE001 - reported together below
+        except BaseException as error:  # noqa: BLE001 - reported together below (NOSONAR S5754: keep releasing)
             errors.append(error)
             continue
         _record_released(journal, record, title)
