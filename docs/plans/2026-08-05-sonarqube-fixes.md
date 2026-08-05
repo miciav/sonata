@@ -301,7 +301,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
         a resource held with no way to release it is worse than one released
         early.
         """
-        if jrnl is None or not jrnl.record_retained(
+        if jrnl is not None and not jrnl.record_retained(
             resource.title, self._retention_order, state.values.get(id(resource))
         ):
             return None
