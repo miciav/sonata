@@ -159,6 +159,55 @@ class _StepScope:
 
 
 @dataclass
+class _MergeState:
+    """DFS state for `_merge_resources`, threaded through the recursion."""
+
+    # Keys deliberately use object identity: resource callbacks and a malformed
+    # cyclic graph must never be hashed while the compiler is diagnosing it.
+    first: dict[int, int] = field(default_factory=dict)
+    last: dict[int, int] = field(default_factory=dict)
+    resources: dict[int, Resource[Any]] = field(default_factory=dict)
+    discovery: list[int] = field(default_factory=list)
+    colors: dict[int, str] = field(default_factory=dict)
+    stack: list[Resource[Any]] = field(default_factory=list)
+    seen_at_index: dict[int, int] = field(default_factory=dict)
+
+
+def _register_dependency(state: _MergeState, resource: Resource[Any], index: int) -> None:
+    """Register one resource at one consumer index, walking its dependencies.
+
+    Depth-first visit; cycles raise `ResourceDependencyCycleError`. A 'done'
+    node is re-walked only when re-encountered at a later index -- without
+    this, a diamond-shaped graph re-walks whole shared subtrees on every path
+    to them, doubling work per level -- exponential in depth.
+    """
+    key = id(resource)
+    color = state.colors.get(key, "unseen")
+    if color == "visiting":
+        cycle_start = next(i for i, item in enumerate(state.stack) if item is resource)
+        cycle = (*state.stack[cycle_start:], resource)
+        raise ResourceDependencyCycleError(
+            "resource dependency cycle: " + " -> ".join(item.title for item in cycle)
+        )
+    if color == "unseen":
+        state.colors[key] = "visiting"
+        state.stack.append(resource)
+        for dependency in resource.requires:
+            _register_dependency(state, dependency, index)
+        state.stack.pop()
+        state.colors[key] = "done"
+        state.resources[key] = resource
+        state.discovery.append(key)
+        state.seen_at_index[key] = index
+    elif state.seen_at_index.get(key) != index:
+        state.seen_at_index[key] = index
+        for dependency in resource.requires:
+            _register_dependency(state, dependency, index)
+    state.first.setdefault(key, index)
+    state.last[key] = index
+
+
+@dataclass
 class Workflow:
     """Ordered workflow builder, compiler, and executor."""
 
@@ -554,58 +603,18 @@ class Workflow:
     ) -> list[CompiledTask[Any]]:
         """Splice acquire/release units around consumers (IDs assigned by caller)."""
         # First/last consumer index per resource, in DFS declaration order.
-        # Keys deliberately use object identity: resource callbacks and a malformed
-        # cyclic graph must never be hashed while the compiler is diagnosing it.
-        first: dict[int, int] = {}
-        last: dict[int, int] = {}
-        resources: dict[int, Resource[Any]] = {}
-        discovery: list[int] = []
-        colors: dict[int, str] = {}
-        stack: list[Resource[Any]] = []
-        # Index at which a 'done' node's subtree was last re-walked to refresh
-        # first/last. Re-encountering the same node at the SAME index is a no-op:
-        # its subtree was already refreshed for this index via some other path.
-        # Without this, a diamond-shaped graph re-walks whole shared subtrees on
-        # every path to them, doubling work per level -- exponential in depth.
-        seen_at_index: dict[int, int] = {}
-
-        def register(resource: Resource[Any], index: int) -> None:
-            key = id(resource)
-            color = colors.get(key, "unseen")
-            if color == "visiting":
-                cycle_start = next(i for i, item in enumerate(stack) if item is resource)
-                cycle = (*stack[cycle_start:], resource)
-                raise ResourceDependencyCycleError(
-                    "resource dependency cycle: " + " -> ".join(item.title for item in cycle)
-                )
-            if color == "unseen":
-                colors[key] = "visiting"
-                stack.append(resource)
-                for dependency in resource.requires:
-                    register(dependency, index)
-                stack.pop()
-                colors[key] = "done"
-                resources[key] = resource
-                discovery.append(key)
-                seen_at_index[key] = index
-            elif seen_at_index.get(key) != index:
-                seen_at_index[key] = index
-                for dependency in resource.requires:
-                    register(dependency, index)
-            first.setdefault(key, index)
-            last[key] = index
-
+        state = _MergeState()
         for index, (_task, requires) in enumerate(definitions):
             for resource in requires:
-                register(resource, index)
+                _register_dependency(state, resource, index)
 
         # Acquisition order: by first-consumer index, then discovery order.
-        acquire_rank = {key: rank for rank, key in enumerate(discovery)}
+        acquire_rank = {key: rank for rank, key in enumerate(state.discovery)}
         acquires_before: dict[int, list[int]] = {}
         releases_after: dict[int, list[int]] = {}
-        for key in discovery:
-            acquires_before.setdefault(first[key], []).append(key)
-            releases_after.setdefault(last[key], []).append(key)
+        for key in state.discovery:
+            acquires_before.setdefault(state.first[key], []).append(key)
+            releases_after.setdefault(state.last[key], []).append(key)
         # Same-point acquires keep acquisition order; same-point releases reverse it.
         for group in acquires_before.values():
             group.sort(key=lambda key: acquire_rank[key])
@@ -615,7 +624,7 @@ class Workflow:
         merged: list[CompiledTask[Any]] = []
         for index, (task, requires) in enumerate(definitions):
             for key in acquires_before.get(index, ()):
-                resource = resources[key]
+                resource = state.resources[key]
                 op = ResourceOp(
                     title=resource.title,
                     resource=resource,
@@ -635,7 +644,7 @@ class Workflow:
                 CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")
             )
             for key in releases_after.get(index, ()):
-                resource = resources[key]
+                resource = state.resources[key]
                 op = ResourceOp(
                     title=resource.release_title,
                     resource=resource,
