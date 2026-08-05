@@ -413,35 +413,15 @@ class Workflow:
         """
         resource = compiled_task.resource
         if resource is not None and id(resource) in retained_resources:
-            # Retention is a promise that a later run can finish the job, and that
-            # run will have no `_RunState`. If the value cannot be written down the
-            # promise cannot be kept, so fall through and release now: a resource
-            # held with no way to release it is worse than one released early.
-            if jrnl is not None and not jrnl.record_retained(
-                resource.title,
-                self._retention_order,
-                state.values.get(id(resource)),
-            ):
-                retained_resources = frozenset()
-        if resource is not None and id(resource) in retained_resources:
-            self._retention_order += 1
-            if jrnl is not None:
-                self._record_release_outcome(
-                    release_errors,
-                    lambda: jrnl.record_skipped(
-                        compiled_task.task_id,
-                        jrnl.next_attempt(compiled_task.task_id),
-                    ),
-                )
-            try:
-                _task_skipped(
-                    task_id=compiled_task.task_id,
-                    title=compiled_task.task.title,
-                )
-            except BaseException as exc:
-                release_errors.append(exc)
-            state.remove(resource)
-            return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
+            skipped = self._retention_skip(
+                resource=resource,
+                compiled_task=compiled_task,
+                release_errors=release_errors,
+                state=state,
+                jrnl=jrnl,
+            )
+            if skipped is not None:
+                return skipped
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)
         if jrnl is not None:
@@ -473,6 +453,45 @@ class Workflow:
             if resource is not None:
                 state.remove(resource)
         return None
+
+    def _retention_skip(
+        self,
+        *,
+        resource: Resource[Any],
+        compiled_task: CompiledTask[object],
+        release_errors: list[BaseException],
+        state: _RunState,
+        jrnl: Journal | None,
+    ) -> TaskExecution | None:
+        """Record the retention and report the skipped release; None when the
+        record could not be written (the caller then releases for real).
+
+        Retention is a promise that a later run can finish the job, and that
+        run will have no `_RunState`. With a journal configured, a promise
+        that cannot be written down cannot be kept, so the caller falls
+        through and releases now: a resource held with no way to release it
+        is worse than one released early. Without a journal there is nothing
+        to record, and the retention is kept silently.
+        """
+        if jrnl is not None and not jrnl.record_retained(
+            resource.title, self._retention_order, state.values.get(id(resource))
+        ):
+            return None
+        self._retention_order += 1
+        if jrnl is not None:
+            self._record_release_outcome(
+                release_errors,
+                lambda: jrnl.record_skipped(
+                    compiled_task.task_id,
+                    jrnl.next_attempt(compiled_task.task_id),
+                ),
+            )
+        try:
+            _task_skipped(task_id=compiled_task.task_id, title=compiled_task.task.title)
+        except BaseException as exc:
+            release_errors.append(exc)
+        state.remove(resource)
+        return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
 
     def add(self, task: Task[Any], requires: tuple[Resource, ...] = ()) -> Workflow:
         """Record a task definition and the resources it consumes. Order preserved."""
