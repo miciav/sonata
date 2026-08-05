@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 from sonata_engine.core.compiled import (
     CompiledTask,
@@ -62,6 +62,19 @@ def _resolve_slug(slugs: list[str], wanted: str) -> int:
     return matches[0]
 
 
+def _maybe_resume_skip(
+    *, task_id: str, task: Task[Any], jrnl: Journal | None, resume: bool
+) -> TaskExecution | None:
+    """The 'skipped' execution when resume says skip; None otherwise."""
+    if jrnl is None or not resume:
+        return None
+    if jrnl.decide_task(task_id, task) != "skip":
+        return None
+    jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
+    _task_skipped(task_id=task_id, title=task.title)
+    return TaskExecution(task_id=task_id, status="skipped", outcome=None)
+
+
 def _execute_recorded(
     *,
     task: Task[Any],
@@ -82,11 +95,9 @@ def _execute_recorded(
     lifecycle -- a failure resolving resources must be reported as a task
     failure, not escape unreported.
     """
-    if jrnl is not None and resume:
-        if jrnl.decide_task(task_id, task) == "skip":
-            jrnl.record_skipped(task_id, jrnl.next_attempt(task_id))
-            _task_skipped(task_id=task_id, title=task.title)
-            return TaskExecution(task_id=task_id, status="skipped", outcome=None)
+    skip = _maybe_resume_skip(task_id=task_id, task=task, jrnl=jrnl, resume=resume)
+    if skip is not None:
+        return skip
 
     attempt = jrnl.next_attempt(task_id) if jrnl is not None else 0
     if jrnl is not None:
@@ -109,7 +120,7 @@ def _execute_recorded(
         if jrnl is not None:
             try:
                 jrnl.record_failed(task_id, attempt)
-            except BaseException as journal_error:
+            except OSError as journal_error:
                 exc.add_note(f"Failed to record task failure: {journal_error}")
         raise
     if jrnl is not None:
@@ -132,10 +143,13 @@ class _StepScope:
         step_id = f"{self.prefix}/{slug}"
 
         def make_inputs() -> TaskInputs:
-            return replace(
-                self.base_inputs,
-                _upstream=upstream,
-                _step_scope=replace(self, prefix=step_id),
+            return cast(
+                TaskInputs,
+                replace(
+                    self.base_inputs,
+                    _upstream=upstream,
+                    _step_scope=replace(self, prefix=step_id),
+                ),
             )
 
         return _execute_recorded(
@@ -145,6 +159,55 @@ class _StepScope:
             jrnl=self.jrnl,
             resume=self.resume,
         )
+
+
+@dataclass
+class _MergeState:
+    """DFS state for `_merge_resources`, threaded through the recursion."""
+
+    # Keys deliberately use object identity: resource callbacks and a malformed
+    # cyclic graph must never be hashed while the compiler is diagnosing it.
+    first: dict[int, int] = field(default_factory=dict)
+    last: dict[int, int] = field(default_factory=dict)
+    resources: dict[int, Resource[Any]] = field(default_factory=dict)
+    discovery: list[int] = field(default_factory=list)
+    colors: dict[int, str] = field(default_factory=dict)
+    stack: list[Resource[Any]] = field(default_factory=list)
+    seen_at_index: dict[int, int] = field(default_factory=dict)
+
+
+def _register_dependency(state: _MergeState, resource: Resource[Any], index: int) -> None:
+    """Register one resource at one consumer index, walking its dependencies.
+
+    Depth-first visit; cycles raise `ResourceDependencyCycleError`. A 'done'
+    node is re-walked only when re-encountered at a later index -- without
+    this, a diamond-shaped graph re-walks whole shared subtrees on every path
+    to them, doubling work per level -- exponential in depth.
+    """
+    key = id(resource)
+    color = state.colors.get(key, "unseen")
+    if color == "visiting":
+        cycle_start = next(i for i, item in enumerate(state.stack) if item is resource)
+        cycle = (*state.stack[cycle_start:], resource)
+        raise ResourceDependencyCycleError(
+            "resource dependency cycle: " + " -> ".join(item.title for item in cycle)
+        )
+    if color == "unseen":
+        state.colors[key] = "visiting"
+        state.stack.append(resource)
+        for dependency in resource.requires:
+            _register_dependency(state, dependency, index)
+        state.stack.pop()
+        state.colors[key] = "done"
+        state.resources[key] = resource
+        state.discovery.append(key)
+        state.seen_at_index[key] = index
+    elif state.seen_at_index.get(key) != index:
+        state.seen_at_index[key] = index
+        for dependency in resource.requires:
+            _register_dependency(state, dependency, index)
+    state.first.setdefault(key, index)
+    state.last[key] = index
 
 
 @dataclass
@@ -223,68 +286,36 @@ class Workflow:
         executions: list[TaskExecution] = []
         state = _RunState()
 
-        for compiled_task in compiled.tasks:
-            if compiled_task.kind == "release":
-                execution = self._release(
-                    compiled_task, release_errors, state, jrnl, retained_resources
-                )
-                if execution is not None:
-                    executions.append(execution)
-                pending = [p for p in pending if p is not compiled_task]
-                continue
-            try:
-                on_executed = None
-                if compiled_task.kind == "acquire":
-                    resource = compiled_task.resource
-                    if resource is None:
-                        raise RuntimeError("acquire task has no resource")
-                    release_task = release_for[id(resource)]
-                    on_executed = partial(pending.append, release_task)
+        try:
+            for compiled_task in compiled.tasks:
+                if compiled_task.kind == "release":
+                    self._run_release_step(
+                        compiled_task,
+                        executions,
+                        pending,
+                        release_errors,
+                        state,
+                        jrnl,
+                        retained_resources,
+                    )
+                    continue
                 executions.append(
                     self._run_unit(
                         compiled_task,
                         jrnl,
                         state,
                         resume=resume,
-                        on_executed=on_executed,
+                        on_executed=self._on_executed_for(
+                            compiled_task, release_for, pending
+                        ),
                     )
                 )
-            except BaseException as exc:
-                main_error = exc
-                break
+        except BaseException as exc:  # NOSONAR S5754 - stop the walk so pending releases can run; re-raised by _raise_final  # noqa: E501
+            main_error = exc
 
         if main_error is not None:
-            for compiled_task in reversed(pending):
-                self._release(compiled_task, release_errors, state, jrnl, retained_resources)
-
-        critical_error = (
-            main_error
-            if main_error is not None and not isinstance(main_error, Exception)
-            else next(
-                (error for error in release_errors if not isinstance(error, Exception)),
-                None,
-            )
-        )
-        if critical_error is not None:
-            if main_error is not None and main_error is not critical_error:
-                critical_error.add_note(f"Task error: {main_error}")
-            for error in release_errors:
-                if error is not critical_error:
-                    critical_error.add_note(f"Cleanup error: {error}")
-            raise critical_error
-
-        if main_error is not None:
-            if release_errors:
-                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
-                    str(error) for error in release_errors
-                )
-                raise RuntimeError(combined) from main_error
-            raise main_error
-
-        if release_errors:
-            raise RuntimeError(
-                "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
-            )
+            self._release_pending(pending, release_errors, state, jrnl, retained_resources)
+        self._raise_final(main_error, release_errors)
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
     def _retained_resources(self, compiled: CompiledWorkflow) -> frozenset[int]:
@@ -304,6 +335,80 @@ class Workflow:
             and task.resource is not None
             and not task.resource.always_release
         )
+
+    def _release_pending(
+        self,
+        pending: list[CompiledTask[object]],
+        release_errors: list[BaseException],
+        state: _RunState,
+        jrnl: Journal | None,
+        retained_resources: frozenset[int],
+    ) -> None:
+        """Run every pending release in reverse acquisition order."""
+        for compiled_task in reversed(pending):
+            self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+
+    def _run_release_step(
+        self,
+        compiled_task: CompiledTask[object],
+        executions: list[TaskExecution],
+        pending: list[CompiledTask[object]],
+        release_errors: list[BaseException],
+        state: _RunState,
+        jrnl: Journal | None,
+        retained_resources: frozenset[int],
+    ) -> None:
+        """Run one release unit in the main walk, collecting its outcome."""
+        execution = self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+        if execution is not None:
+            executions.append(execution)
+        pending[:] = [p for p in pending if p is not compiled_task]
+
+    def _on_executed_for(
+        self,
+        compiled_task: CompiledTask[object],
+        release_for: Mapping[int, CompiledTask[object]],
+        pending: list[CompiledTask[object]],
+    ) -> Callable[[], None] | None:
+        """The release-unit callback for an acquire unit; None for consumers."""
+        if compiled_task.kind != "acquire":
+            return None
+        resource = compiled_task.resource
+        if resource is None:
+            raise RuntimeError("acquire task has no resource")
+        return partial(pending.append, release_for[id(resource)])
+
+    def _raise_final(
+        self, main_error: BaseException | None, release_errors: list[BaseException]
+    ) -> None:
+        """Raise the run's outcome: critical errors first, then the primary
+        error with cleanup notes, else the collected cleanup errors."""
+        critical_error = (
+            main_error
+            if main_error is not None and not isinstance(main_error, Exception)
+            else next(
+                (error for error in release_errors if not isinstance(error, Exception)),
+                None,
+            )
+        )
+        if critical_error is not None:
+            if main_error is not None and main_error is not critical_error:
+                critical_error.add_note(f"Task error: {main_error}")
+            for error in release_errors:
+                if error is not critical_error:
+                    critical_error.add_note(f"Cleanup error: {error}")
+            raise critical_error
+        if main_error is not None:
+            if release_errors:
+                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
+                    str(error) for error in release_errors
+                )
+                raise RuntimeError(combined) from main_error
+            raise main_error
+        if release_errors:
+            raise RuntimeError(
+                "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
+            )
 
     def _next_attempt(self, jrnl: Journal | None, task_id: str) -> int:
         return jrnl.next_attempt(task_id) if jrnl is not None else 0
@@ -335,13 +440,16 @@ class Workflow:
                 if compiled_task.kind == "acquire" and compiled_task.resource is not None
                 else compiled_task.required_resources
             )
-            return replace(
-                base,
-                _step_scope=_StepScope(
-                    prefix=compiled_task.task_id,
-                    base_inputs=base,
-                    jrnl=jrnl,
-                    resume=resume,
+            return cast(
+                TaskInputs,
+                replace(
+                    base,
+                    _step_scope=_StepScope(
+                        prefix=compiled_task.task_id,
+                        base_inputs=base,
+                        jrnl=jrnl,
+                        resume=resume,
+                    ),
                 ),
             )
 
@@ -388,35 +496,15 @@ class Workflow:
         """
         resource = compiled_task.resource
         if resource is not None and id(resource) in retained_resources:
-            # Retention is a promise that a later run can finish the job, and that
-            # run will have no `_RunState`. If the value cannot be written down the
-            # promise cannot be kept, so fall through and release now: a resource
-            # held with no way to release it is worse than one released early.
-            if jrnl is not None and not jrnl.record_retained(
-                resource.title,
-                self._retention_order,
-                state.values.get(id(resource)),
-            ):
-                retained_resources = frozenset()
-        if resource is not None and id(resource) in retained_resources:
-            self._retention_order += 1
-            if jrnl is not None:
-                self._record_release_outcome(
-                    release_errors,
-                    lambda: jrnl.record_skipped(
-                        compiled_task.task_id,
-                        jrnl.next_attempt(compiled_task.task_id),
-                    ),
-                )
-            try:
-                _task_skipped(
-                    task_id=compiled_task.task_id,
-                    title=compiled_task.task.title,
-                )
-            except BaseException as exc:
-                release_errors.append(exc)
-            state.remove(resource)
-            return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
+            skipped = self._retention_skip(
+                resource=resource,
+                compiled_task=compiled_task,
+                release_errors=release_errors,
+                state=state,
+                jrnl=jrnl,
+            )
+            if skipped is not None:
+                return skipped
         task_id = compiled_task.task_id
         attempt = self._next_attempt(jrnl, task_id)
         if jrnl is not None:
@@ -432,7 +520,7 @@ class Workflow:
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
                     )
-        except BaseException as exc:
+        except BaseException as exc:  # NOSONAR S5754 - collect the failure; every pending release must still run  # noqa: E501
             release_errors.append(exc)
             if jrnl is not None:
                 self._record_release_outcome(
@@ -448,6 +536,45 @@ class Workflow:
             if resource is not None:
                 state.remove(resource)
         return None
+
+    def _retention_skip(
+        self,
+        *,
+        resource: Resource[Any],
+        compiled_task: CompiledTask[object],
+        release_errors: list[BaseException],
+        state: _RunState,
+        jrnl: Journal | None,
+    ) -> TaskExecution | None:
+        """Record the retention and report the skipped release; None when the
+        record could not be written (the caller then releases for real).
+
+        Retention is a promise that a later run can finish the job, and that
+        run will have no `_RunState`. With a journal configured, a promise
+        that cannot be written down cannot be kept, so the caller falls
+        through and releases now: a resource held with no way to release it
+        is worse than one released early. Without a journal there is nothing
+        to record, and the retention is kept silently.
+        """
+        if jrnl is not None and not jrnl.record_retained(
+            resource.title, self._retention_order, state.values.get(id(resource))
+        ):
+            return None
+        self._retention_order += 1
+        if jrnl is not None:
+            self._record_release_outcome(
+                release_errors,
+                lambda: jrnl.record_skipped(
+                    compiled_task.task_id,
+                    jrnl.next_attempt(compiled_task.task_id),
+                ),
+            )
+        try:
+            _task_skipped(task_id=compiled_task.task_id, title=compiled_task.task.title)
+        except BaseException as exc:  # NOSONAR S5754 - a reporting failure must not abort the retention skip  # noqa: E501
+            release_errors.append(exc)
+        state.remove(resource)
+        return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
 
     def add(self, task: Task[Any], requires: tuple[Resource, ...] = ()) -> Workflow:
         """Record a task definition and the resources it consumes. Order preserved."""
@@ -510,58 +637,18 @@ class Workflow:
     ) -> list[CompiledTask[Any]]:
         """Splice acquire/release units around consumers (IDs assigned by caller)."""
         # First/last consumer index per resource, in DFS declaration order.
-        # Keys deliberately use object identity: resource callbacks and a malformed
-        # cyclic graph must never be hashed while the compiler is diagnosing it.
-        first: dict[int, int] = {}
-        last: dict[int, int] = {}
-        resources: dict[int, Resource[Any]] = {}
-        discovery: list[int] = []
-        colors: dict[int, str] = {}
-        stack: list[Resource[Any]] = []
-        # Index at which a 'done' node's subtree was last re-walked to refresh
-        # first/last. Re-encountering the same node at the SAME index is a no-op:
-        # its subtree was already refreshed for this index via some other path.
-        # Without this, a diamond-shaped graph re-walks whole shared subtrees on
-        # every path to them, doubling work per level -- exponential in depth.
-        seen_at_index: dict[int, int] = {}
-
-        def register(resource: Resource[Any], index: int) -> None:
-            key = id(resource)
-            color = colors.get(key, "unseen")
-            if color == "visiting":
-                cycle_start = next(i for i, item in enumerate(stack) if item is resource)
-                cycle = (*stack[cycle_start:], resource)
-                raise ResourceDependencyCycleError(
-                    "resource dependency cycle: " + " -> ".join(item.title for item in cycle)
-                )
-            if color == "unseen":
-                colors[key] = "visiting"
-                stack.append(resource)
-                for dependency in resource.requires:
-                    register(dependency, index)
-                stack.pop()
-                colors[key] = "done"
-                resources[key] = resource
-                discovery.append(key)
-                seen_at_index[key] = index
-            elif seen_at_index.get(key) != index:
-                seen_at_index[key] = index
-                for dependency in resource.requires:
-                    register(dependency, index)
-            first.setdefault(key, index)
-            last[key] = index
-
+        state = _MergeState()
         for index, (_task, requires) in enumerate(definitions):
             for resource in requires:
-                register(resource, index)
+                _register_dependency(state, resource, index)
 
         # Acquisition order: by first-consumer index, then discovery order.
-        acquire_rank = {key: rank for rank, key in enumerate(discovery)}
+        acquire_rank = {key: rank for rank, key in enumerate(state.discovery)}
         acquires_before: dict[int, list[int]] = {}
         releases_after: dict[int, list[int]] = {}
-        for key in discovery:
-            acquires_before.setdefault(first[key], []).append(key)
-            releases_after.setdefault(last[key], []).append(key)
+        for key in state.discovery:
+            acquires_before.setdefault(state.first[key], []).append(key)
+            releases_after.setdefault(state.last[key], []).append(key)
         # Same-point acquires keep acquisition order; same-point releases reverse it.
         for group in acquires_before.values():
             group.sort(key=lambda key: acquire_rank[key])
@@ -571,7 +658,7 @@ class Workflow:
         merged: list[CompiledTask[Any]] = []
         for index, (task, requires) in enumerate(definitions):
             for key in acquires_before.get(index, ()):
-                resource = resources[key]
+                resource = state.resources[key]
                 op = ResourceOp(
                     title=resource.title,
                     resource=resource,
@@ -591,7 +678,7 @@ class Workflow:
                 CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")
             )
             for key in releases_after.get(index, ()):
-                resource = resources[key]
+                resource = state.resources[key]
                 op = ResourceOp(
                     title=resource.release_title,
                     resource=resource,

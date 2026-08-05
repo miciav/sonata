@@ -88,7 +88,7 @@ def _task_lifecycle(
                         context=child,
                     )
                 )
-            except BaseException as reporting_error:
+            except BaseException as reporting_error:  # NOSONAR S5754 - sink failure is noted on the original exc, which is re-raised  # noqa: E501
                 exc.add_note(f"Failed to emit task.failed for {task_id}: {reporting_error}")
             raise
         else:

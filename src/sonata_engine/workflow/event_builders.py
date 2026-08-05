@@ -14,9 +14,12 @@ def _resolve_context_fields(
     inherit_task_id: bool = True,
 ) -> tuple[str, str | None, str | None, str | None, str | None]:
     active = context or WorkflowContext()
-    resolved_task_id = (
-        task_id if task_id is not None else (active.task_id if inherit_task_id else None)
-    )
+    if task_id is not None:
+        resolved_task_id = task_id
+    elif inherit_task_id:
+        resolved_task_id = active.task_id
+    else:
+        resolved_task_id = None
     resolved_parent = parent_task_id if parent_task_id is not None else active.parent_task_id
     return (
         flow_id or active.flow_id,
