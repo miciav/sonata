@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
@@ -24,6 +25,7 @@ from sonata_engine.errors import (
     SelectionError,
 )
 from sonata_engine.journal import Journal, JournalConfig, Verifier
+from sonata_engine.workflow.observers import WorkflowCompletion, WorkflowObserver
 from sonata_engine.workflow.reporting import _task_lifecycle, _task_skipped
 
 
@@ -166,6 +168,7 @@ class Workflow:
         resume: bool = False,
         verifiers: Mapping[str, Verifier] | None = None,
         select: Selection | None = None,
+        observers: tuple[WorkflowObserver, ...] = (),
     ) -> WorkflowResult:
         """Compile and run this workflow using compiler-owned task identities.
 
@@ -173,12 +176,31 @@ class Workflow:
         are still acquired and released around them. A sliced run has a
         different fingerprint, so `resume` across one fails closed.
         """
-        return self._run_compiled(
-            self.compile(select=select),
-            journal=journal,
-            resume=resume,
-            verifiers=verifiers,
-        )
+        started_at = datetime.now(UTC)
+        error: BaseException | None = None
+        try:
+            return self._run_compiled(
+                self.compile(select=select),
+                journal=journal,
+                resume=resume,
+                verifiers=verifiers,
+            )
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            completion = WorkflowCompletion(
+                workflow_id=self.workflow_id,
+                started_at=started_at,
+                finished_at=datetime.now(UTC),
+                error=error,
+            )
+            for observer in observers:
+                try:
+                    observer.finished(completion)
+                except BaseException as observer_error:
+                    if error is not None:
+                        error.add_note(f"Workflow observer failed: {observer_error}")
 
     def _run_compiled(
         self,
