@@ -74,6 +74,3 @@ reportImplicitOverride = true
 reportMissingTypeStubs = false
 venvPath = "../.."
 venv = ".venv"
-
-[tool.uv.sources]
-sonata-engine = { workspace = true }
