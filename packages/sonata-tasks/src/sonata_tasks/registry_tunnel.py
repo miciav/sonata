@@ -4,9 +4,39 @@ from collections.abc import Callable
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.compensation import best_effort
-from sonata_tasks.transfer import RemoteCommandProvider
+from sonata_tasks.transfer import RemoteCommandProvider, RemoteOperationResult
+
+
+def _require_tunnel_result(
+    result: RemoteOperationResult,
+    *,
+    action: str,
+    absent_ok: bool,
+) -> None:
+    return_code = result.return_code
+    if not isinstance(return_code, int) or isinstance(return_code, bool):
+        raise RuntimeError(f"registry tunnel {action} returned no integer return_code")
+    if return_code == 0:
+        return
+    detail = result.stderr or result.stdout
+    absent_markers = ("not loaded", "not found", "does not exist")
+    if absent_ok and any(marker in detail.lower() for marker in absent_markers):
+        return
+    suffix = f": {detail}" if detail else ""
+    raise RuntimeError(f"registry tunnel {action} failed (exit {return_code}){suffix}")
+
+
+def _tunnel_title(
+    title: str | None,
+    registry_upstream: str | Callable[[], str],
+    upstream_port: int,
+) -> str:
+    if title is not None:
+        return title
+    if callable(registry_upstream):
+        return "Acquire registry tunnel"
+    return f"Acquire registry tunnel to {registry_upstream}:{upstream_port}"
 
 
 def registry_tunnel_resource[RequestT](
@@ -27,18 +57,7 @@ def registry_tunnel_resource[RequestT](
 
     def run(argv: tuple[str, ...], *, action: str, absent_ok: bool = False) -> None:
         result = provider.exec_argv(request, argv)
-        if not isinstance(result.return_code, int) or isinstance(result.return_code, bool):
-            raise RuntimeError(f"registry tunnel {action} returned no integer return_code")
-        if result.return_code != 0:
-            detail = result.stderr or result.stdout
-            if absent_ok and any(
-                marker in detail.lower() for marker in ("not loaded", "not found", "does not exist")
-            ):
-                return
-            raise RuntimeError(
-                f"registry tunnel {action} failed (exit {result.return_code})"
-                + (f": {detail}" if detail else "")
-            )
+        _require_tunnel_result(result, action=action, absent_ok=absent_ok)
 
     def quiet(argv: tuple[str, ...]) -> None:
         try:
@@ -77,13 +96,8 @@ def registry_tunnel_resource[RequestT](
         finally:
             quiet(reset)
 
-    resource_title = title or (
-        "Acquire registry tunnel"
-        if callable(registry_upstream)
-        else f"Acquire registry tunnel to {registry_upstream}:{upstream_port}"
-    )
     return Resource(
-        title=resource_title,
+        title=_tunnel_title(title, registry_upstream, upstream_port),
         acquire=acquire,
         release=release,
         requires=requires,

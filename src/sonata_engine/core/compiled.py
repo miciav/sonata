@@ -3,21 +3,19 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Literal
 
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.task import Task
 from sonata_engine.errors import MissingAcquireUnitError
 
-T = TypeVar("T")
-
 TaskKind = Literal["consumer", "acquire", "release"]
 TaskExecutionStatus = Literal["passed", "skipped"]
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledTask(Generic[T]):
+class CompiledTask[T]:
     """A task with its compiler-assigned, stable identity.
 
     `task_id` only ever exists here; `Task` instances never carry one.

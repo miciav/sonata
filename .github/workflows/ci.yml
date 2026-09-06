@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  engine:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,14 +20,92 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: uv sync --dev
+      - name: Install engine dependencies only
+        run: uv sync --locked --package sonata-engine --group dev
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Verify the catalogue is not installed
+        run: >-
+          uv run --locked --package sonata-engine python -c
+          "import importlib.util; assert importlib.util.find_spec('sonata_tasks') is None"
 
-      - name: Run ruff
-        run: uv run ruff check .
+      - name: Run engine tests
+        run: uv run --locked --package sonata-engine pytest -c pyproject.toml tests
 
-      - name: Run basedpyright
-        run: uv run basedpyright
+      - name: Check engine source
+        run: |
+          uv run --locked --package sonata-engine ruff check src tests
+          uv run --locked --package sonata-engine basedpyright --project .
+
+  catalogue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install catalogue dependencies and every optional integration
+        run: uv sync --locked --all-packages --all-groups --all-extras
+
+      - name: Run task catalogue tests
+        run: >-
+          uv run --locked --all-packages --all-groups --all-extras pytest
+          -c packages/sonata-tasks/pyproject.toml packages/sonata-tasks/tests
+
+      - name: Check task catalogue source
+        run: |
+          uv run --locked --all-packages --all-groups --all-extras ruff check --config packages/sonata-tasks/pyproject.toml packages/sonata-tasks
+          uv run --locked --all-packages --all-groups --all-extras basedpyright --project packages/sonata-tasks
+          uv run --locked --all-packages --all-groups --all-extras lint-imports --config packages/sonata-tasks/.importlinter --no-cache
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: base
+            extra: ""
+          - name: shell
+            extra: shell
+          - name: prometheus
+            extra: prometheus
+          - name: multipass
+            extra: multipass
+          - name: azure
+            extra: azure
+          - name: proxmox
+            extra: proxmox
+    name: wheel (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build task catalogue distribution
+        run: uv build --package sonata-tasks --out-dir dist
+
+      - name: Install wheel and run independent consumer
+        env:
+          TASK_EXTRA: ${{ matrix.extra }}
+        run: |
+          if [ -n "$TASK_EXTRA" ]; then
+            python scripts/check_task_wheel.py dist/sonata_tasks-*.whl --extra "$TASK_EXTRA"
+          else
+            python scripts/check_task_wheel.py dist/sonata_tasks-*.whl
+          fi

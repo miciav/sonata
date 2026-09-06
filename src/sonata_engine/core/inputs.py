@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Set
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sonata_engine.errors import (
     NoUpstreamValueError,
@@ -14,8 +14,6 @@ from sonata_engine.errors import (
 if TYPE_CHECKING:
     from sonata_engine.core.resource_task import Resource
     from sonata_engine.core.step_scope import _StepScopeProtocol
-
-T = TypeVar("T")
 
 # Distinct from `None`, which is a legitimate and reconstructible step value.
 _NO_UPSTREAM: Any = object()
@@ -55,7 +53,7 @@ class TaskInputs:
     ) -> TaskInputs:
         return cls(values, frozenset(map(id, accessible)))
 
-    def resource(self, resource: Resource[T]) -> T:
+    def resource[T](self, resource: Resource[T]) -> T:
         resource_id = id(resource)
         if resource_id not in self._accessible:
             raise UndeclaredResourceError(f"resource {resource.title!r} is not declared")

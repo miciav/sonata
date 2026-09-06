@@ -33,7 +33,7 @@ wheels = [
 [[package]]
 name = "azure-vm-sdk"
 version = "0.1.0"
-source = { git = "https://github.com/miciav/azure-vm-sdk.git?rev=eb8a542#eb8a54203e36ea48cb37ba26044353ba4afc8259" }
+source = { git = "https://github.com/miciav/azure-vm-sdk.git?rev=eb8a54203e36ea48cb37ba26044353ba4afc8259#eb8a54203e36ea48cb37ba26044353ba4afc8259" }
 dependencies = [
     { name = "paramiko" },
     { name = "pyyaml" },
@@ -669,7 +669,7 @@ wheels = [
 [[package]]
 name = "multipass-sdk"
 version = "0.6.0"
-source = { git = "https://github.com/miciav/multipass-sdk.git?rev=402c406#402c4061e6b32cc6dda5e7a9876fa7cefd6f9ae1" }
+source = { git = "https://github.com/miciav/multipass-sdk.git?rev=402c4061e6b32cc6dda5e7a9876fa7cefd6f9ae1#402c4061e6b32cc6dda5e7a9876fa7cefd6f9ae1" }
 dependencies = [
     { name = "haikunator" },
     { name = "pyyaml" },
@@ -727,7 +727,7 @@ wheels = [
 [[package]]
 name = "proxmox-sdk"
 version = "0.2.0"
-source = { git = "https://github.com/miciav/proxmox-sdk.git?rev=9e20703#9e2070384c92a03dffdfb3ac7e248f0861cb0537" }
+source = { git = "https://github.com/miciav/proxmox-sdk.git?rev=9e2070384c92a03dffdfb3ac7e248f0861cb0537#9e2070384c92a03dffdfb3ac7e248f0861cb0537" }
 dependencies = [
     { name = "paramiko" },
     { name = "proxmoxer" },
@@ -1087,10 +1087,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "azure-vm-sdk", marker = "extra == 'azure'", git = "https://github.com/miciav/azure-vm-sdk.git?rev=eb8a542" },
+    { name = "azure-vm-sdk", marker = "extra == 'azure'", git = "https://github.com/miciav/azure-vm-sdk.git?rev=eb8a54203e36ea48cb37ba26044353ba4afc8259" },
     { name = "httpx", marker = "extra == 'prometheus'", specifier = ">=0.27" },
-    { name = "multipass-sdk", marker = "extra == 'multipass'", git = "https://github.com/miciav/multipass-sdk.git?rev=402c406" },
-    { name = "proxmox-sdk", marker = "extra == 'proxmox'", git = "https://github.com/miciav/proxmox-sdk.git?rev=9e20703" },
+    { name = "multipass-sdk", marker = "extra == 'multipass'", git = "https://github.com/miciav/multipass-sdk.git?rev=402c4061e6b32cc6dda5e7a9876fa7cefd6f9ae1" },
+    { name = "proxmox-sdk", marker = "extra == 'proxmox'", git = "https://github.com/miciav/proxmox-sdk.git?rev=9e2070384c92a03dffdfb3ac7e248f0861cb0537" },
     { name = "pydantic", marker = "extra == 'azure'", specifier = ">=2.9.2" },
     { name = "pydantic", marker = "extra == 'multipass'", specifier = ">=2.9.2" },
     { name = "pydantic", marker = "extra == 'proxmox'", specifier = ">=2.9.2" },

@@ -3,11 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sonata_engine import Steps, TaskInputs, Workflow
-
 from sonata_tasks.core.command import Argv, CommandTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.testing import RecordingExecutor
+
+from sonata_engine import Steps, TaskInputs, Workflow
 
 
 def test_command_returns_result_and_builds_the_spec() -> None:
@@ -58,6 +58,19 @@ def test_dynamic_argv_and_verification_require_semantic_keys() -> None:
         CommandTask(title="X", argv=lambda _: ("true",), executor=executor)
     with pytest.raises(ValueError, match="semantic_key"):
         CommandTask(title="X", argv=("true",), executor=executor, verify=lambda _: None)
+
+
+@pytest.mark.parametrize("argv", [(), ("",), ("true", 1)])
+def test_dynamic_argv_is_validated_after_resolution(argv: tuple[object, ...]) -> None:
+    task = CommandTask(
+        title="X",
+        argv=lambda _inputs: argv,  # type: ignore[return-value]
+        executor=RecordingExecutor(),
+        semantic_key="dynamic:v1",
+    )
+
+    with pytest.raises(ValueError, match="argv"):
+        task.run(TaskInputs.empty())
 
 
 def _fingerprint(task: CommandTask) -> str:

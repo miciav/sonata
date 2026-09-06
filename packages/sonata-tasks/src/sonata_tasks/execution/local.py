@@ -17,6 +17,7 @@ class LocalCommandTaskExecutor:
         self._target_key = target_key
 
     def binding_key(self, role: str) -> str:
+        del role
         return self._target_key
 
     @staticmethod

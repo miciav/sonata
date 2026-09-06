@@ -107,10 +107,7 @@ def main() -> None:
         Steps(
             title="Build images",
             steps=(
-                *(
-                    BuildImage(image, first=index == 0)
-                    for index, image in enumerate(IMAGES)
-                ),
+                *(BuildImage(image, first=index == 0) for index, image in enumerate(IMAGES)),
                 ScanImages(),
             ),
         )
@@ -129,8 +126,7 @@ def main() -> None:
         print(f"  {execution.task_id:<25} {execution.status:<8} {outcome}")
 
     print(
-        f"\n{len(IMAGES)} images built as {len(IMAGES) + 1} reported steps, "
-        "inside 1 compiled unit."
+        f"\n{len(IMAGES)} images built as {len(IMAGES) + 1} reported steps, inside 1 compiled unit."
     )
 
 

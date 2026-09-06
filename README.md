@@ -9,6 +9,11 @@ packages such as nanoFaaS.
 - Runtime dependencies: none
 - Python: 3.12+
 
+The repository also builds `sonata-tasks`, a reusable task catalog. Its public
+contracts, extras and journal migration rules are documented in
+[`docs/task-catalog.md`](docs/task-catalog.md); an independent executable consumer
+lives in [`examples/shared_tasks_client.py`](examples/shared_tasks_client.py).
+
 ## Breaking change in 0.2.0
 
 `0.2.0` changes two call signatures with no compatibility shim. Pre-existing code

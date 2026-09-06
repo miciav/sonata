@@ -4,8 +4,10 @@ import ipaddress
 import json
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from azure_vm import AzureClient, AzureVM
 from azure_vm.exceptions import VmNotFoundError
@@ -14,6 +16,15 @@ from shellcraft.backend import ShellExecutionResult
 from sonata_tasks.vm.models import VmRequest, vm_remote_home
 from sonata_tasks.vm.results import successful_result
 from sonata_tasks.vm.ssh import find_ssh_private_key_path
+
+_MISSING = object()
+
+
+def _required_value(payload: Mapping[object, object], key: str) -> Any:  # noqa: ANN401
+    value = payload.get(key, _MISSING)
+    if value is _MISSING:
+        raise KeyError(key)
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,13 +208,13 @@ class AzureVmProvider:
             raise RuntimeError("Azure VM facts response is invalid")
         try:
             image_urn = ":".join(
-                str(payload[key])
+                str(_required_value(payload, key))
                 for key in ("imagePublisher", "imageOffer", "imageSku", "imageVersion")
             )
             return AzureVmFacts(
-                location=str(payload["location"]),
-                vm_size=str(payload["vmSize"]),
-                disk_size_gb=int(payload["diskSizeGb"]),
+                location=str(_required_value(payload, "location")),
+                vm_size=str(_required_value(payload, "vmSize")),
+                disk_size_gb=int(_required_value(payload, "diskSizeGb")),
                 image_urn=image_urn,
             )
         except (KeyError, TypeError, ValueError) as error:

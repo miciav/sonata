@@ -17,6 +17,8 @@ def _canonical(value: object) -> object:
         return value
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, (bytes, bytearray)):
+        return {"bytes_hex": bytes(value).hex()}
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("fingerprint mappings must use string keys")
@@ -37,3 +39,14 @@ def fingerprint_digest(payload: Mapping[str, Any]) -> str:
         separators=(",", ":"),
     ).encode()
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def semantic_key(namespace: str, payload: Mapping[str, Any]) -> str:
+    """Build a stable, opaque key for configuration captured by a callable.
+
+    Keeping the payload behind a digest prevents credentials and large request
+    bodies from leaking into journals while retaining deterministic invalidation.
+    """
+    if not namespace:
+        raise ValueError("semantic key namespace must not be empty")
+    return f"{namespace}:{fingerprint_digest(payload)}"

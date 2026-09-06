@@ -5,7 +5,6 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pytest
-
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec, TaskResult
 
 

@@ -65,7 +65,8 @@ trap cleanup EXIT
 if [ "$DRY" = false ]; then
     if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
         if curl -sf "$SONAR_HOST/api/system/status" 2>/dev/null | python3 -c \
-            'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status")=="UP" else 1)'; then
+            'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status")=="UP" else 1)' \
+            2>/dev/null; then
             echo "Reusing running container ${CONTAINER_NAME}"
         else
             docker rm -f "$CONTAINER_NAME" >/dev/null
@@ -82,7 +83,8 @@ if [ "$DRY" = false ]; then
     echo "Waiting for SonarQube on ${SONAR_HOST} (timeout ${START_TIMEOUT}s)..."
     deadline=$((SECONDS + START_TIMEOUT))
     while ! curl -sf "$SONAR_HOST/api/system/status" 2>/dev/null | python3 -c \
-        'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status")=="UP" else 1)'; do
+        'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status")=="UP" else 1)' \
+        2>/dev/null; do
         if (( SECONDS >= deadline )); then
             echo "SonarQube not UP after ${START_TIMEOUT}s; last container logs:" >&2
             docker logs --tail 50 "$CONTAINER_NAME" >&2 || true
@@ -118,7 +120,8 @@ run_python() {
     run sonar-scanner \
         -Dsonar.host.url="$SONAR_HOST" -Dsonar.token="$TOKEN" \
         -Dsonar.projectKey="$PROJECT_KEY" -Dsonar.projectName="sonata Python" \
-        -Dsonar.sources=src \
+        -Dsonar.python.version=3.12 \
+        -Dsonar.sources=src,packages/sonata-tasks/src \
         -Dsonar.exclusions="**/__pycache__/**,**/*.pyc"
 }
 
@@ -126,12 +129,17 @@ FAILED=""
 if ! run_python; then FAILED=" python"; fi
 # --- Report ------------------------------------------------------------------
 wait_for_analysis() {
-    # The scanner exits as soon as the report is uploaded; issues are only
-    # queryable once the Compute Engine has processed it. Wait for CE first.
-    local key="$1" status="" deadline=$((SECONDS + 180))
+    # Poll the exact task submitted by this scanner run. The component's
+    # "current" task can still be the previous SUCCESS while a rerun is queued.
+    local key="$1" status="" deadline=$((SECONDS + 180)) task_url=""
+    task_url="$(sed -n 's/^ceTaskUrl=//p' .scannerwork/report-task.txt)"
+    if [ -z "$task_url" ]; then
+        echo "  WARNING: scanner report has no Compute Engine task URL for ${key}" >&2
+        return 1
+    fi
     while true; do
-        status="$(curl -sf -u "$TOKEN": "$SONAR_HOST/api/ce/component?component=${key}" 2>/dev/null \
-            | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("current") or {}).get("status",""))' 2>/dev/null || true)"
+        status="$(curl -sf -u "$TOKEN": "$task_url" 2>/dev/null \
+            | python3 -c 'import json,sys; print((json.load(sys.stdin).get("task") or {}).get("status",""))' 2>/dev/null || true)"
         case "$status" in
             SUCCESS) return 0 ;;
             FAILED|CANCELED)
@@ -152,7 +160,8 @@ report() {
     if [ "$DRY" = false ]; then
         if ! wait_for_analysis "$key"; then return 1; fi
         if ! counts="$(curl -sf -u "$TOKEN": \
-            "$SONAR_HOST/api/issues/search?componentKeys=${key}&resolved=false&ps=1&facets=impactSeverities" \
+            "$SONAR_HOST/api/issues/search?componentKeys=${key}&resolved=false&ps=500&facets=impactSeverities" \
+            | tee .scannerwork/issues.json \
             | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -176,6 +185,7 @@ sys.exit(1)
         local breakdown="${counts#*|}"
         echo "  ${name}: ${total} open issues (${breakdown//,/ })"
         echo "    ${SONAR_HOST}/project/issues?resolved=false&id=${key}"
+        echo "    Detailed findings: .scannerwork/issues.json"
     fi
 }
 

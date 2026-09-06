@@ -12,6 +12,10 @@ def find_ssh_public_key() -> str:
     """Compatibility hook for callers that patch credential discovery."""
     from multipass import find_ssh_public_key as discover
 
-    return discover()
+    key = discover()
+    if key is None:
+        raise RuntimeError("Multipass did not expose an SSH public key")
+    return key
+
 
 __all__ = ["MultipassVmProvider", "resolve_connection_host", "find_ssh_public_key"]

@@ -25,6 +25,7 @@ class HostCommandTaskExecutor:
         self._target_key = target_key
 
     def binding_key(self, role: str) -> str:
+        del role
         return self._target_key
 
     def run(self, task: CommandTaskSpec, *, dry_run: bool = False) -> TaskResult:
@@ -49,6 +50,7 @@ class VmCommandTaskExecutor:
         self._target_key = target_key
 
     def binding_key(self, role: str) -> str:
+        del role
         return self._target_key
 
     def run(self, task: CommandTaskSpec, *, dry_run: bool = False) -> TaskResult:

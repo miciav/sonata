@@ -3,17 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Generic, TypeVar, override
+from typing import Any, override
 
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 from sonata_engine.core.task import Task
 
-T = TypeVar("T")
-
 
 @dataclass(frozen=True, slots=True, eq=False)
-class Resource(Generic[T]):
+class Resource[T]:
     """A pair of acquire/release side effects a task depends on.
 
     A `Resource` is not itself added to a workflow; consumer tasks reference it

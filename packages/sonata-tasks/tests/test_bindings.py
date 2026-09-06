@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from sonata_tasks.execution.bindings import RoleBindings, RoleBoundCommandTaskExecutor
 from sonata_tasks.execution.models import CommandTaskSpec
 from sonata_tasks.testing import RecordingExecutor

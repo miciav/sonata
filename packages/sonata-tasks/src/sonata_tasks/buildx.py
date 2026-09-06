@@ -5,7 +5,6 @@ from dataclasses import replace
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.execution.models import CommandOptions, TaskResult
@@ -40,6 +39,11 @@ def _create_argv(name: str, buildkitd_config: str | None) -> tuple[str, ...]:
     return tuple(argv)
 
 
+def _validate_output(validate: Callable[[str], None] | None, stdout: str) -> None:
+    if validate is not None:
+        validate(stdout)
+
+
 def buildx_builder_resource(
     *,
     name: str,
@@ -63,8 +67,7 @@ def buildx_builder_resource(
         try:
             _ = _run(inputs, executor, role, current, *_create_argv(name, buildkitd_config))
             result = _run(inputs, executor, role, current, "inspect", "--bootstrap", name)
-            if validate is not None:
-                validate(result.stdout)
+            _validate_output(validate, result.stdout)
         except BaseException as error:
             best_effort(error, lambda: remove(inputs), what=f"cleanup failed buildx builder {name}")
             raise
@@ -73,12 +76,13 @@ def buildx_builder_resource(
         inspected = _run(
             inputs, executor, role, current, "inspect", name, expected=frozenset({0, 1})
         )
-        if inspected.return_code == 0:
-            if not replace_existing:
-                if validate is not None:
-                    validate(inspected.stdout)
-                return "existing"
-            remove(inputs)
+        if inspected.return_code != 0:
+            bootstrap(inputs)
+            return name
+        if not replace_existing:
+            _validate_output(validate, inspected.stdout)
+            return "existing"
+        remove(inputs)
         bootstrap(inputs)
         return name
 

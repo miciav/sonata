@@ -13,17 +13,17 @@ shell = [
 ]
 prometheus = ["httpx>=0.27"]
 multipass = [
-    "multipass-sdk @ git+https://github.com/miciav/multipass-sdk.git@402c406",
+    "multipass-sdk @ git+https://github.com/miciav/multipass-sdk.git@402c4061e6b32cc6dda5e7a9876fa7cefd6f9ae1",
     "pydantic>=2.9.2",
     "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
 ]
 azure = [
-    "azure-vm-sdk @ git+https://github.com/miciav/azure-vm-sdk.git@eb8a542",
+    "azure-vm-sdk @ git+https://github.com/miciav/azure-vm-sdk.git@eb8a54203e36ea48cb37ba26044353ba4afc8259",
     "pydantic>=2.9.2",
     "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
 ]
 proxmox = [
-    "proxmox-sdk @ git+https://github.com/miciav/proxmox-sdk.git@9e20703",
+    "proxmox-sdk @ git+https://github.com/miciav/proxmox-sdk.git@9e2070384c92a03dffdfb3ac7e248f0861cb0537",
     "pydantic>=2.9.2",
     "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
 ]
@@ -65,6 +65,7 @@ select = ["ANN", "E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN"]
+"**/tests/**/*.py" = ["ANN"]
 
 [tool.basedpyright]
 include = ["src/sonata_tasks", "tests"]

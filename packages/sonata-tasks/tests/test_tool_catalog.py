@@ -4,8 +4,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from sonata_engine import TaskInputs, Workflow
-
 from sonata_tasks.ansible import AnsiblePlaybookTask
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compose import DestroyDockerCompose, DockerComposeProject, docker_compose_resource
@@ -24,6 +22,8 @@ from sonata_tasks.prometheus import HttpPrometheusClient, PrometheusRetryPolicy
 from sonata_tasks.skopeo import SkopeoCopyTask
 from sonata_tasks.syft import SyftTask
 from sonata_tasks.testing import RecordingExecutor
+
+from sonata_engine import TaskInputs, Workflow
 
 
 def _run(task: CommandTask, executor: RecordingExecutor) -> tuple[str, ...]:

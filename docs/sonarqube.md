@@ -38,8 +38,8 @@ What happens:
    pinned) is started on `127.0.0.1:9000` and polled until ready (timeout
    300s). A stale container from a previous run is replaced; a running one is
    reused as-is.
-2. `src/` is analysed via the `sonar-scanner` CLI (static analysis; no
-   coverage import).
+2. `src/` and `packages/sonata-tasks/src/` are analysed via the
+   `sonar-scanner` CLI (static analysis; no coverage import).
 3. The script prints the open-issue counts per severity for the project
    (`sonata-python`) plus the UI URL, and leaves the server running so the
    issue lists can be read in the browser.

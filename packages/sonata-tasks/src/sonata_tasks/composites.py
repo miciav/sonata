@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from sonata_engine import Steps
-
 from sonata_tasks.command import CommandTask
 from sonata_tasks.core.fingerprint import fingerprint_digest
 from sonata_tasks.execution.models import CommandTaskSpec

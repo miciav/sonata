@@ -9,3 +9,11 @@ name = sonata-engine must not import sonata-tasks
 type = forbidden
 source_modules = sonata_engine
 forbidden_modules = sonata_tasks
+
+[importlinter:contract:catalogue_does_not_import_products]
+name = sonata-tasks must not import downstream products
+type = forbidden
+source_modules = sonata_tasks
+forbidden_modules =
+    nanolab
+    tui_toolkit

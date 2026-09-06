@@ -8,9 +8,14 @@ from sonata_engine import Task, TaskInputs, TaskOutcome
 
 
 class RemoteOperationResult(Protocol):
-    return_code: int
-    stdout: str
-    stderr: str
+    @property
+    def return_code(self) -> int: ...
+
+    @property
+    def stdout(self) -> str: ...
+
+    @property
+    def stderr(self) -> str: ...
 
 
 class RemoteCommandProvider[RequestT](Protocol):

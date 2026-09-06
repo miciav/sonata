@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Protocol, TypeVar, overload
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.compensation import best_effort
 
 

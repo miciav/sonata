@@ -42,6 +42,28 @@ class HttpClient(Protocol):
     def get(self, url: str, *, params: Mapping[str, str], timeout: float) -> httpx.Response: ...
 
 
+def _parse_sample(sample: object) -> PrometheusSample:
+    if not isinstance(sample, list) or len(sample) != 2:
+        raise RuntimeError("invalid prometheus sample")
+    try:
+        return PrometheusSample(float(sample[0]), float(sample[1]))
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"invalid prometheus sample: {sample!r}") from error
+
+
+def _parse_series(raw_series: object) -> PrometheusSeries:
+    if not isinstance(raw_series, dict):
+        raise RuntimeError("invalid prometheus series")
+    labels, values = raw_series.get("metric"), raw_series.get("values")
+    if (
+        not isinstance(labels, dict)
+        or not all(isinstance(key, str) and isinstance(value, str) for key, value in labels.items())
+        or not isinstance(values, list)
+    ):
+        raise RuntimeError("invalid prometheus series")
+    return PrometheusSeries(labels, tuple(_parse_sample(sample) for sample in values))
+
+
 class HttpPrometheusClient:
     def __init__(
         self,
@@ -100,29 +122,10 @@ class HttpPrometheusClient:
                 "step": f"{step_seconds}s",
             },
         )
-        if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+        result = data.get("result") if isinstance(data, dict) else None
+        if not isinstance(result, list):
             raise RuntimeError("invalid prometheus query_range payload")
-        series: list[PrometheusSeries] = []
-        for raw_series in data["result"]:
-            if not isinstance(raw_series, dict):
-                raise RuntimeError("invalid prometheus series")
-            labels, values = raw_series.get("metric"), raw_series.get("values")
-            if (
-                not isinstance(labels, dict)
-                or not all(isinstance(k, str) and isinstance(v, str) for k, v in labels.items())
-                or not isinstance(values, list)
-            ):
-                raise RuntimeError("invalid prometheus series")
-            samples: list[PrometheusSample] = []
-            for sample in values:
-                if not isinstance(sample, list) or len(sample) != 2:
-                    raise RuntimeError("invalid prometheus sample")
-                try:
-                    samples.append(PrometheusSample(float(sample[0]), float(sample[1])))
-                except (TypeError, ValueError) as error:
-                    raise RuntimeError(f"invalid prometheus sample: {sample!r}") from error
-            series.append(PrometheusSeries(labels, tuple(samples)))
-        return tuple(series)
+        return tuple(_parse_series(raw_series) for raw_series in result)
 
     def server_time(self) -> float:
         data = self._get("/api/v1/query", {"query": "time()"})

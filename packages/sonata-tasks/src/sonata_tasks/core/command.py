@@ -4,7 +4,6 @@ from collections.abc import Callable
 from typing import override
 
 from sonata_engine import Task, TaskInputs, TaskOutcome
-
 from sonata_tasks.core.fingerprint import fingerprint_digest
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec, TaskResult
 from sonata_tasks.execution.ports import CommandTaskExecutor
@@ -50,6 +49,8 @@ class CommandTask(Task[TaskResult]):
 
     def _spec(self, inputs: TaskInputs) -> CommandTaskSpec:
         argv = self.argv(inputs) if callable(self.argv) else self.argv
+        if not argv or not argv[0] or any(not isinstance(part, str) for part in argv):
+            raise ValueError("argv must start with a non-empty program name")
         return CommandTaskSpec(
             task_id="",
             summary=self.title,

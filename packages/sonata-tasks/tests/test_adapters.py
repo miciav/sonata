@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from sonata_tasks.errors import UnsupportedCommandOptionError
 from sonata_tasks.execution.adapters import HostCommandTaskExecutor, VmCommandTaskExecutor
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec

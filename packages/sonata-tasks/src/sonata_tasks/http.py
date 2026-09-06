@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from sonata_engine import Resource
-
 from sonata_tasks.command import Argv, CommandTask
+from sonata_tasks.core.fingerprint import semantic_key as build_semantic_key
 from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.execution.ports import CommandTaskExecutor
 
@@ -58,8 +58,14 @@ class HttpStatusCheckTask(CommandTask):
                     f"{url}: answered {actual or 'nothing'}, expected {expected_status}"
                 )
 
-        key = f"http-status:v1:{expected_status}:{semantic_key or url!s}:" + repr(
-            (tuple((headers or {}).items()), payload)
+        key = build_semantic_key(
+            "http-status:v2",
+            {
+                "endpoint": semantic_key or url,
+                "expected_status": expected_status,
+                "headers": dict(headers or {}),
+                "payload": payload,
+            },
         )
         super().__init__(
             title=title or f"Expect {expected_status} from {url}",

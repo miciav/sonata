@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, override
+from typing import override
 
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
 
-T = TypeVar("T")
 
-
-class Task(Generic[T], ABC):
+class Task[T](ABC):
     """Base class for composable workflow tasks.
 
     Subclasses must implement `run` and return a `TaskOutcome[T]`; the

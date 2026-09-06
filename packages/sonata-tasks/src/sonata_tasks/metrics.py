@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from functools import partial
 
 from sonata_engine import TaskInputs
-
 from sonata_tasks.command import CommandTask
+from sonata_tasks.core.fingerprint import semantic_key as build_semantic_key
 from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.execution.ports import CommandTaskExecutor
 
@@ -51,6 +52,34 @@ def _require_metric_sum(
     raise RuntimeError(f"{url}: none of {names} appeared with labels {dict(labels)}")
 
 
+def _check_scrape(
+    result: TaskResult,
+    *,
+    url: object,
+    expect: tuple[str, ...],
+    reject: tuple[str, ...],
+) -> None:
+    for sample in expect:
+        if sample not in result.stdout:
+            raise RuntimeError(f"{url}: expected sample not scraped: {sample}")
+    for sample in reject:
+        if sample in result.stdout:
+            raise RuntimeError(f"{url}: sample present and should not be: {sample}")
+
+
+def _check_minimums(
+    result: TaskResult,
+    *,
+    url: object,
+    minimums: tuple[tuple[str, Mapping[str, str], float], ...],
+    any_minimums: tuple[tuple[tuple[str, ...], Mapping[str, str], float], ...],
+) -> None:
+    for name, labels, minimum in minimums:
+        _require_metric_sum(url, result.stdout, (name,), labels, minimum)
+    for names, labels, minimum in any_minimums:
+        _require_metric_sum(url, result.stdout, names, labels, minimum)
+
+
 class PrometheusScrapeCheckTask(CommandTask):
     def __init__(
         self,
@@ -69,27 +98,22 @@ class PrometheusScrapeCheckTask(CommandTask):
         if callable(url) and not semantic_key:
             raise ValueError("semantic_key is required for a dynamic metrics endpoint")
 
-        def check(result: TaskResult) -> None:
-            for sample in expect:
-                if sample not in result.stdout:
-                    raise RuntimeError(f"{url}: expected sample not scraped: {sample}")
-            for sample in reject:
-                if sample in result.stdout:
-                    raise RuntimeError(f"{url}: sample present and should not be: {sample}")
-
         argv = (
             (lambda inputs: ("curl", "-fsS", _resolve(url, inputs)))
             if callable(url)
             else ("curl", "-fsS", url)
         )
-        key = f"metrics-scrape:v1:{semantic_key or url!s}:{expect!r}:{reject!r}"
+        key = build_semantic_key(
+            "metrics-scrape:v2",
+            {"endpoint": semantic_key or url, "expect": expect, "reject": reject},
+        )
         super().__init__(
             title=title or f"Check the metrics at {url}",
             argv=argv,
             executor=executor,
             role=role,
             options=options,
-            verify=check,
+            verify=partial(_check_scrape, url=url, expect=expect, reject=reject),
             semantic_key=key,
         )
 
@@ -112,24 +136,30 @@ class PrometheusMinimumCheckTask(CommandTask):
         if callable(url) and not semantic_key:
             raise ValueError("semantic_key is required for a dynamic metrics endpoint")
 
-        def check(result: TaskResult) -> None:
-            for name, labels, minimum in minimums:
-                _require_metric_sum(url, result.stdout, (name,), labels, minimum)
-            for names, labels, minimum in any_minimums:
-                _require_metric_sum(url, result.stdout, names, labels, minimum)
-
         argv = (
             (lambda inputs: ("curl", "-fsS", _resolve(url, inputs)))
             if callable(url)
             else ("curl", "-fsS", url)
         )
-        key = f"metrics-minimum:v1:{semantic_key or url!s}:{minimums!r}:{any_minimums!r}"
+        key = build_semantic_key(
+            "metrics-minimum:v2",
+            {
+                "endpoint": semantic_key or url,
+                "minimums": minimums,
+                "any_minimums": any_minimums,
+            },
+        )
         super().__init__(
             title=title or "Check metric values",
             argv=argv,
             executor=executor,
             role=role,
             options=options,
-            verify=check,
+            verify=partial(
+                _check_minimums,
+                url=url,
+                minimums=minimums,
+                any_minimums=any_minimums,
+            ),
             semantic_key=key,
         )

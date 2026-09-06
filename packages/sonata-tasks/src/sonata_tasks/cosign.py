@@ -109,11 +109,11 @@ def _cosign_command(
     *,
     predicate_type: str = "custom",
     sbom_type: str = "spdx",
-) -> tuple[str, ...]:
+) -> list[str]:
     if operation == "sign":
-        return ("sign", "--yes", "--key", _KEY_COSIGN, image)
+        return ["sign", "--yes", "--key", _KEY_COSIGN, image]
     if operation == "attest":
-        return (
+        return [
             "attest",
             "--yes",
             "--key",
@@ -123,15 +123,15 @@ def _cosign_command(
             "--predicate",
             "/predicate.json",
             image,
-        )
+        ]
     if operation == _ATTACH_SBOM:
-        return ("attach", "sbom", "--sbom", "/sbom.json", "--type", sbom_type, image)
+        return ["attach", "sbom", "--sbom", "/sbom.json", "--type", sbom_type, image]
     if operation == "verify":
-        return ("verify", "--key", "/pub.key", image)
+        return ["verify", "--key", "/pub.key", image]
     if operation == "verify-attestation":
-        return ("verify-attestation", "--key", "/pub.key", "--type", predicate_type, image)
+        return ["verify-attestation", "--key", "/pub.key", "--type", predicate_type, image]
     if operation == "public-key":
         if output_file is None:
             raise ValueError("cosign public-key needs an output_file")
-        return ("public-key", "--key", _KEY_COSIGN)
+        return ["public-key", "--key", _KEY_COSIGN]
     raise ValueError(f"unknown cosign operation: {operation}")

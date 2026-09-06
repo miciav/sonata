@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 
 from sonata_tasks.command import CommandTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult
@@ -10,7 +9,13 @@ from sonata_tasks.execution.ports import CommandTaskExecutor
 
 def _docker_options(options: CommandOptions | None, docker_config: str) -> CommandOptions:
     current = options or CommandOptions()
-    return replace(current, env={**current.env, "DOCKER_CONFIG": docker_config})
+    return CommandOptions(
+        cwd=current.cwd,
+        env={**current.env, "DOCKER_CONFIG": docker_config},
+        remote_dir=current.remote_dir,
+        expected_exit_codes=current.expected_exit_codes,
+        timeout_seconds=current.timeout_seconds,
+    )
 
 
 class ImagetoolsCreateTask(CommandTask):

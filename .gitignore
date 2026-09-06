@@ -1,6 +1,7 @@
 .coverage
 .pytest_cache/
 .ruff_cache/
+.scannerwork/
 .venv/
 .worktrees/
 __pycache__/
