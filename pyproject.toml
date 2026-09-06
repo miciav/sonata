@@ -18,6 +18,12 @@ where = ["src"]
 [tool.setuptools.package-data]
 sonata_engine = ["py.typed"]
 
+[tool.uv.workspace]
+members = ["packages/sonata-tasks"]
+
+[tool.uv.sources]
+sonata-engine = { workspace = true }
+
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.3",

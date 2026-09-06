@@ -1,0 +1,78 @@
+[project]
+name = "sonata-tasks"
+version = "0.2.0"
+description = "Reusable task catalogue for the Sonata workflow engine"
+requires-python = ">=3.12"
+dependencies = [
+    "sonata-engine @ git+https://github.com/miciav/sonata.git@e81d559952d4a168edffbe3c7108bd9a017046e9",
+]
+
+[project.optional-dependencies]
+shell = [
+    "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
+]
+prometheus = ["httpx>=0.27"]
+multipass = [
+    "multipass-sdk @ git+https://github.com/miciav/multipass-sdk.git@402c406",
+    "pydantic>=2.9.2",
+    "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
+]
+azure = [
+    "azure-vm-sdk @ git+https://github.com/miciav/azure-vm-sdk.git@eb8a542",
+    "pydantic>=2.9.2",
+    "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
+]
+proxmox = [
+    "proxmox-sdk @ git+https://github.com/miciav/proxmox-sdk.git@9e20703",
+    "pydantic>=2.9.2",
+    "shellcraft @ git+https://github.com/miciav/shellcraft.git@b6547835aac88d058810c7b9a592ad442c54ac99",
+]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sonata_tasks = ["py.typed"]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.3",
+    "httpx>=0.27",
+    "grimp>=3.14",
+    "import-linter>=2.11",
+    "pytest>=9.0.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.15.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=sonata_tasks --cov-report=term-missing --cov-fail-under=90"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ANN", "E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ANN"]
+
+[tool.basedpyright]
+include = ["src/sonata_tasks", "tests"]
+typeCheckingMode = "standard"
+reportImplicitOverride = true
+reportMissingTypeStubs = false
+venvPath = "../.."
+venv = ".venv"
+
+[tool.uv.sources]
+sonata-engine = { workspace = true }
