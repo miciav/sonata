@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
-
 from sonata_tasks.shell import (
     RecordingShell,
     ScriptedShell,

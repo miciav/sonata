@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from sonata_engine import Resource, TaskInputs
 
+from sonata_engine import Resource, TaskInputs
 from sonata_tasks.process import managed_process_resource
 
 

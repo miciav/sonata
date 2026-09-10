@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from sonata_engine import Workflow
-
 from sonata_tasks.composites import command_specs_composite, command_specs_fingerprint
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec
 from sonata_tasks.testing import RecordingExecutor

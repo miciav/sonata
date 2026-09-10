@@ -4,8 +4,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from sonata_engine import TaskInputs, Workflow
 
+from sonata_engine import TaskInputs, Workflow
 from sonata_tasks.ansible import AnsiblePlaybookTask
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compose import (

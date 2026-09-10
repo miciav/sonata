@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+
 from sonata_engine import TaskInputs
 from sonata_engine.errors import NoUpstreamValueError
-
 from sonata_tasks.kubectl import (
     ClusterIpEndpointTask,
     KubectlTask,

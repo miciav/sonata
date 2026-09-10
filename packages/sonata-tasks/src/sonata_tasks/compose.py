@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from sonata_engine import Resource, Steps, TaskInputs
-
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compensation import compensated_resource
 from sonata_tasks.execution.models import CommandOptions

@@ -107,6 +107,15 @@ ignore = [
     "PT018",
 ]
 
+[tool.ruff.lint.isort]
+# Declared rather than inferred. Ruff derives first-party packages from the
+# project root, which changes with --config: run with this file as the config
+# and `sonata_tasks` was inferred as third-party, so the blank line separating
+# it from pytest was reported as an unsorted import, while running with the
+# engine's config reported nothing. Naming the packages makes both invocations
+# agree, and the catalogue legitimately imports both.
+known-first-party = ["sonata_tasks", "sonata_engine"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "ANN",

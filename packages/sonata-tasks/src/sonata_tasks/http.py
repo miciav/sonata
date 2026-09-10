@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from sonata_engine import Resource
-
 from sonata_tasks.command import Argv, CommandTask
 from sonata_tasks.core.fingerprint import semantic_key as build_semantic_key
 from sonata_tasks.execution.models import CommandOptions, TaskResult

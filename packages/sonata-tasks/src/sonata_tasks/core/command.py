@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import override
 
 from sonata_engine import Task, TaskInputs, TaskOutcome
-
 from sonata_tasks.core.fingerprint import fingerprint_digest
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec, TaskResult
 from sonata_tasks.execution.ports import CommandTaskExecutor

@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.transfer import RemoteProvider
 

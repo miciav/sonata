@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
-from sonata_engine import Resource, TaskInputs
 
+from sonata_engine import Resource, TaskInputs
 from sonata_tasks.helm import (
     HelmInstallTask,
     HelmReleaseSpec,

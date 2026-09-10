@@ -9,7 +9,6 @@ from typing import Any, Literal
 from urllib.request import urlopen
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.docker import DockerTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult

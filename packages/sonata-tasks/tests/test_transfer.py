@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import override
 
 from sonata_engine import TaskInputs
-
 from sonata_tasks.transfer import FileTransferTask
 
 

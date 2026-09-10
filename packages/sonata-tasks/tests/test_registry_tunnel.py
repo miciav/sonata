@@ -2,8 +2,8 @@ from dataclasses import dataclass, field
 from typing import override
 
 import pytest
-from sonata_engine import TaskInputs
 
+from sonata_engine import TaskInputs
 from sonata_tasks.registry_tunnel import registry_tunnel_resource
 
 TUNNEL_OPTIONS = {

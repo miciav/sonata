@@ -7,7 +7,6 @@ from collections.abc import Callable
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.transfer import RemoteCommandProvider, RemoteOperationResult
 

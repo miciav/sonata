@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sonata_engine import Steps, TaskInputs, Workflow
 
+from sonata_engine import Steps, TaskInputs, Workflow
 from sonata_tasks.core.command import Argv, CommandTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.testing import RecordingExecutor

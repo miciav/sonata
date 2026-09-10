@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping
 from functools import partial
 
 from sonata_engine import TaskInputs
-
 from sonata_tasks.command import CommandTask
 from sonata_tasks.core.fingerprint import semantic_key as build_semantic_key
 from sonata_tasks.execution.models import CommandOptions, TaskResult

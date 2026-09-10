@@ -94,6 +94,14 @@ ignore = [
     "PT018",
 ]
 
+[tool.ruff.lint.isort]
+# Declared rather than inferred: ruff derives first-party packages from the
+# project root, which changes with --config, so the engine and the catalogue
+# disagreed about the same import block depending on which config ran. The
+# engine lists only itself - importing the catalogue from here is forbidden by
+# the contract in packages/sonata-tasks/.importlinter.
+known-first-party = ["sonata_engine"]
+
 [tool.ruff.lint.per-file-ignores]
 # Test functions are documented by their name; requiring a docstring on every
 # one of them is noise, not documentation. Style rules (D2xx/D4xx) still apply.

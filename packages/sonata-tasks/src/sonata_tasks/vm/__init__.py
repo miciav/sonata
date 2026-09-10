@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.compensation import compensated_resource
 from sonata_tasks.vm.models import VmConfig, VmInfo
 from sonata_tasks.vm.ports import VmLifecycleProtocol

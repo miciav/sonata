@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
-
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compensation import compensated_resource
 from sonata_tasks.execution.models import CommandOptions

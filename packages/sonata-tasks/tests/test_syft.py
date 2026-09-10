@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass, field
 
 import pytest
-from sonata_engine import TaskInputs
 
+from sonata_engine import TaskInputs
 from sonata_tasks.command import CommandTask
 from sonata_tasks.syft import SYFT_IMAGE, SyftTask
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult

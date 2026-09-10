@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
-from sonata_engine import TaskInputs
 
+from sonata_engine import TaskInputs
 from sonata_tasks.command import CommandTask
 from sonata_tasks.gradle import GradleTask
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult

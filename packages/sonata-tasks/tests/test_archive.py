@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from sonata_engine import Resource, TaskInputs
 
+from sonata_engine import Resource, TaskInputs
 from sonata_tasks.archive import source_archive_resource
 
 

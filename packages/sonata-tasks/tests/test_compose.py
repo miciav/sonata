@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from sonata_engine import Workflow
 
+from sonata_engine import Workflow
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compose import DockerComposeProject, docker_compose_resource
 from sonata_tasks.execution.models import CommandOptions
