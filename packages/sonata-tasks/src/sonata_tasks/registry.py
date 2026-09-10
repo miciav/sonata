@@ -1,3 +1,5 @@
+"""Run a local Docker registry container as a resource."""
+
 from __future__ import annotations
 
 import time
@@ -7,6 +9,7 @@ from typing import Any, Literal
 from urllib.request import urlopen
 
 from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.docker import DockerTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult
@@ -17,8 +20,15 @@ RegistryCommand = Callable[..., TaskResult]
 
 
 def _answers(port: int) -> bool:
+    """Return whether a registry answers its v2 API on ``port``.
+
+    The port is the only variable part of the URL below: the scheme, host and
+    path are literals, so B310's file:/custom-scheme concern cannot apply.
+    """
     try:
-        with urlopen(f"http://127.0.0.1:{port}/v2/", timeout=1) as response:  # noqa: S310
+        with urlopen(  # nosec B310
+            f"http://127.0.0.1:{port}/v2/", timeout=1
+        ) as response:
             return response.status == 200
     except OSError:
         return False
@@ -87,6 +97,20 @@ def docker_registry_resource(
     sleep: Callable[[float], None] = time.sleep,
     requires: tuple[Resource[Any], ...] = (),
 ) -> Resource[RegistryState]:
+    """Acquire a running local registry container and report how it got there.
+
+    Acquiring inspects the container: a running one is adopted, a stopped one is
+    started, and a missing one is run detached with ``--restart unless-stopped``
+    and published on ``port``. It then polls ``ready`` (defaulting to the
+    registry's ``/v2/`` endpoint) until it answers, or fails. The returned state
+    tells the release apart: only containers this resource started or created
+    are stopped or removed again.
+
+    Raises:
+        ValueError: If ``container`` is empty or ``readiness_attempts`` is below
+            one.
+
+    """
     if not container:
         raise ValueError("container must not be empty")
     if readiness_attempts < 1:
@@ -115,7 +139,11 @@ def docker_registry_resource(
 
     def acquire(inputs: TaskInputs) -> RegistryState:
         inspected = run(
-            inputs, "inspect", "--format={{.State.Running}}", container, expected=frozenset({0, 1})
+            inputs,
+            "inspect",
+            "--format={{.State.Running}}",
+            container,
+            expected=frozenset({0, 1}),
         )
         state = _registry_state(inspected)
         try:
@@ -137,10 +165,15 @@ def docker_registry_resource(
         except BaseException as error:
             if state != "existing":
                 best_effort(
-                    error, lambda: release(inputs, state), what="cleanup for Acquire local registry"
+                    error,
+                    lambda: release(inputs, state),
+                    what="cleanup for Acquire local registry",
                 )
             raise
 
     return Resource(
-        title="Acquire local registry", acquire=acquire, release=release, requires=requires
+        title="Acquire local registry",
+        acquire=acquire,
+        release=release,
+        requires=requires,
     )

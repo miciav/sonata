@@ -41,6 +41,8 @@ def test_ensure_vm_running_returns_vm_info() -> None:
 def test_destroy_vm_calls_lifecycle_destroy() -> None:
     lifecycle = _make_lifecycle()
     info = VmInfo(name="my-vm", host="10.0.0.1", user="ubuntu", home="/home/ubuntu")
-    task = DestroyVm(task_id="vm.destroy", title="Destroy VM", lifecycle=lifecycle, info=info)
+    task = DestroyVm(
+        task_id="vm.destroy", title="Destroy VM", lifecycle=lifecycle, info=info
+    )
     task.run()
     assert info in lifecycle.destroyed

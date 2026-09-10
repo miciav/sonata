@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
 from sonata_tasks.vm.models import VmRequest
 from sonata_tasks.vm.providers.multipass import MultipassVmProvider
 
@@ -54,7 +55,7 @@ def test_vm_name_default() -> None:
 
 
 def test_teardown_dry_run_returns_ok() -> None:
-    provider, shell, _ = _make_provider()
+    provider, _shell, _ = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
     result = provider.teardown(req, dry_run=True)
     assert result.return_code == 0
@@ -76,14 +77,19 @@ def test_ensure_running_external_calls_ssh() -> None:
 
 
 def test_transfer_from_makes_the_local_path_absolute(monkeypatch) -> None:  # pyright: ignore[reportMissingParameterType]
-    """scp runs from the workspace, not from where the caller stands: a relative
+    """Resolve a relative destination against the caller's cwd, not the workspace.
+
+    Scp runs from the workspace, not from where the caller stands: a relative
     destination would land in the checkout instead of the caller's directory,
-    and the transfer would still report success."""
+    and the transfer would still report success.
+    """
     provider, shell, _ = _make_provider()
     monkeypatch.chdir(Path(__file__).parent)
     req = VmRequest(lifecycle="multipass", name="my-vm")
 
-    _ = provider.transfer_from(req, source="/remote/file.txt", destination=Path("out/results"))
+    _ = provider.transfer_from(
+        req, source="/remote/file.txt", destination=Path("out/results")
+    )
 
     command = shell.run.call_args.args[0]
     assert command[-1] == str((Path(__file__).parent / "out/results").resolve())
@@ -94,16 +100,21 @@ def test_transfer_to_makes_the_local_path_absolute(monkeypatch) -> None:  # pyri
     monkeypatch.chdir(Path(__file__).parent)
     req = VmRequest(lifecycle="multipass", name="my-vm")
 
-    _ = provider.transfer_to(req, source=Path("assets/payload"), destination="/remote/payload")
+    _ = provider.transfer_to(
+        req, source=Path("assets/payload"), destination="/remote/payload"
+    )
 
     command = shell.run.call_args.args[0]
     assert str((Path(__file__).parent / "assets/payload").resolve()) in command
 
 
 def test_transfer_from_dry_run() -> None:
-    provider, shell, _ = _make_provider()
+    provider, _shell, _ = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
     result = provider.transfer_from(
-        req, source="/remote/file.txt", destination=Path("/local/file.txt"), dry_run=True
+        req,
+        source="/remote/file.txt",
+        destination=Path("/local/file.txt"),
+        dry_run=True,
     )
     assert result.return_code == 0

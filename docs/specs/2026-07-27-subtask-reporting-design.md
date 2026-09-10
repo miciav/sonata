@@ -96,7 +96,9 @@ is ordinary object composition — which is exactly how `workflow-tasks` did it
 class DockerBuildImagesTask(Task[tuple[TaskResult, ...]]):
     """Build several images as one step of the workflow."""
 
-    def __init__(self, *, title: str, slug: str, builds: tuple[DockerBuildTask, ...]) -> None:
+    def __init__(
+        self, *, title: str, slug: str, builds: tuple[DockerBuildTask, ...]
+    ) -> None:
         self.title = title
         self._slug = slug
         self._builds = builds

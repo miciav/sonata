@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 from sonata_engine import (
     Evidence,
@@ -193,7 +193,9 @@ def test_full_workflow_runs_and_resumes_end_to_end(tmp_path: Path) -> None:
         "report",
     ]
     assert resumed.by_id("003.build-release").status == "passed"
-    skipped = next(event for event in resumed_sink.events if event.kind == "task.skipped")
+    skipped = next(
+        event for event in resumed_sink.events if event.kind == "task.skipped"
+    )
     assert skipped.task_id == "003.build-release/build-image"
     nested = next(
         event

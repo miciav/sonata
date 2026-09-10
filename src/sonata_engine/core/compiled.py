@@ -1,3 +1,11 @@
+"""Immutable artifacts produced by compiling and running a workflow.
+
+`CompiledWorkflow` is what `Workflow.compile()` returns: the recorded tasks
+rewritten into a flat sequence of `CompiledTask` units with compiler-assigned
+IDs. `WorkflowResult` is what a run returns: one `TaskExecution` per unit, in
+execution order.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -101,6 +109,7 @@ class WorkflowResult:
     tasks: tuple[TaskExecution, ...]
 
     def by_id(self, task_id: str) -> TaskExecution:
+        """Return the execution whose `task_id` matches, or raise `KeyError`."""
         for execution in self.tasks:
             if execution.task_id == task_id:
                 return execution

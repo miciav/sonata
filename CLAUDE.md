@@ -4,14 +4,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+This repository is a uv workspace of two packages, and most checks run per
+package rather than over the whole tree:
+
+- `sonata-engine` (`src/sonata_engine/`) — the engine, no runtime dependencies.
+- `sonata-tasks` (`packages/sonata-tasks/`) — the task catalogue, with optional
+  integrations for shellcraft, proxmox-sdk, azure-vm-sdk and multipass-sdk.
+
 ```bash
-uv sync --dev                                # install (uses uv, Python >= 3.12)
-uv run pytest                                # all tests (coverage on by default)
-uv run pytest tests/core/test_workflow.py    # one file
-uv run pytest tests/core/test_workflow.py::test_name   # one test
-uv run ruff check .                          # lint (ANN, E, F, I; line length 100)
-uv run basedpyright                          # type check (standard mode, reportImplicitOverride)
+uv sync --all-packages --all-groups --all-extras   # install everything
+
+# Engine
+uv run pytest -c pyproject.toml tests
+uv run ruff check src tests
+uv run basedpyright --project .
+
+# Catalogue
+uv run pytest -c packages/sonata-tasks/pyproject.toml packages/sonata-tasks/tests
+uv run ruff check --config packages/sonata-tasks/pyproject.toml packages/sonata-tasks
+uv run basedpyright --project packages/sonata-tasks
+uv run lint-imports --config packages/sonata-tasks/.importlinter --no-cache
+
+# Everything CI runs, in one go
+uv run pre-commit run --all-files
 ```
+
+## Tooling
+
+The same stack as the sibling projects: ruff for lint and format, basedpyright
+for types, bandit for security, pytest with a coverage gate, all wired into
+pre-commit so local and CI cannot drift.
+
+| Concern | Tool | Config |
+| --- | --- | --- |
+| Lint + format | ruff (88 cols) | `[tool.ruff]` in each package's `pyproject.toml` |
+| Types | basedpyright | `[tool.basedpyright]`, standard mode |
+| Security | bandit | `[tool.bandit]` |
+| Import layers | import-linter | `packages/sonata-tasks/.importlinter` |
+| Coverage | pytest-cov | `[tool.coverage.report]`, `fail_under = 90` |
+
+Two deliberate differences from the 3.11 projects: `reportImplicitOverride` is
+**on** here (the engine requires 3.12, so `typing.override` is always available),
+and `ANN` is part of the ruff rule set, because this codebase already required
+annotations everywhere and dropping the rule would have been a loosening.
+
+The coverage threshold is declared once, in `[tool.coverage.report]`. It is not
+repeated as a `--cov-fail-under` flag on the pytest command line: stating it in
+two places is how the two come to disagree, with the flag silently winning.
+
+**Watch out for `build/`:** ruff's built-in exclude list has `dist` but not
+`build`, so a leftover setuptools build tree gets linted as if it were source.
+Both packages set `extend-exclude = ["build", "dist"]` for that reason.
 
 ## What this is
 

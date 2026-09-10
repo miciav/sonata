@@ -31,24 +31,110 @@ dev = [
     "basedpyright>=1.39.3",
     "pytest>=9.0.3",
     "pytest-cov>=6.0",
-    "ruff>=0.15.12",
+    # Pinned exactly to match the ruff-pre-commit revision in
+    # .pre-commit-config.yaml. A newer ruff in either place makes the hook and a
+    # local `ruff check` disagree about what a violation is. Bump both together.
+    "ruff==0.16.6",
+    "bandit>=1.8",
+    "pre-commit>=4.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --cov=sonata_engine --cov-report=term-missing"
 
+# =============================================================================
+# Ruff - linting + formatting
+# =============================================================================
+#   uv run ruff check .          # lint
+#   uv run ruff check --fix .    # lint + apply safe fixes
+#   uv run ruff format .         # format
+#
+# The rule set matches the sibling projects. ANN (flake8-annotations) is the one
+# addition: this engine already required annotations on every function, and
+# dropping the rule to match the others would have been a loosening.
+
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+line-length = 88
+# ruff's built-in exclude list has `dist` but not `build`, so a setuptools build
+# directory left in the tree gets linted as if it were source. It is a stale
+# copy of the package and must never be scanned.
+extend-exclude = ["build", "dist"]
 
 [tool.ruff.lint]
-select = ["ANN", "E", "F", "I"]
+select = [
+    "ANN",   # flake8-annotations
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # Pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "TID",   # flake8-tidy-imports
+    "RUF",   # Ruff-specific rules
+    "PERF",  # Perflint
+    "PT",    # flake8-pytest-style
+    "RET",   # flake8-return
+    "PTH",   # flake8-use-pathlib
+    "ERA",   # eradicate - commented-out code
+    "D",     # pydocstyle - this is a published library with a public API
+]
+ignore = [
+    # Mutually exclusive summary conventions. Summary on the first line (D212)
+    # is the chosen convention, so its counterpart D213 is off; D203 pairs with
+    # D211 the same way.
+    "D203",
+    "D213",
+    # Wants compound asserts split. Several tests here assert a property of a
+    # multi-element structure in one go, where splitting hides the intent.
+    "PT018",
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN"]
+# Test functions are documented by their name; requiring a docstring on every
+# one of them is noise, not documentation. Style rules (D2xx/D4xx) still apply.
+"tests/**/*.py" = [
+    "ANN",
+    "D100", "D101", "D102", "D103", "D104", "D105", "D107",
+]
+# Run-to-read demo scripts: they are narrative by nature, so the docstring
+# requirements add nothing a reader of the file does not already have.
+"examples/**/*.py" = ["D100", "D103"]
+"scripts/**/*.py" = ["D100", "D103"]
+
+# =============================================================================
+# Coverage
+# =============================================================================
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+
+# =============================================================================
+# basedpyright - type checking
+# =============================================================================
+# reportImplicitOverride is on here, unlike in the 3.11 projects: this engine
+# requires 3.12, so typing.override is always available.
 
 [tool.basedpyright]
 include = ["src/sonata_engine"]
 typeCheckingMode = "standard"
 reportImplicitOverride = true
+
+# =============================================================================
+# Bandit - security static analysis
+# =============================================================================
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = [
+    # B404 (import subprocess), B603 (subprocess call), B607 (partial path):
+    # unavoidable for a wrapper around external tooling.
+    "B404",
+    "B603",
+    "B607",
+]

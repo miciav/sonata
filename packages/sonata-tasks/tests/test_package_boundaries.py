@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.parametrize(
     "module",
-    (
+    [
         "sonata_tasks.vm",
         "sonata_tasks.prometheus",
         "sonata_tasks.vm.multipass",
@@ -22,7 +22,7 @@ import pytest
         "sonata_tasks.helm",
         "sonata_tasks.compose",
         "sonata_tasks.composites",
-    ),
+    ],
 )
 def test_catalog_module_does_not_import_nanolab(module: str) -> None:
     code = (

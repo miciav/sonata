@@ -1,9 +1,12 @@
+"""Install and uninstall a Helm release as a resource."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compensation import compensated_resource
 from sonata_tasks.execution.models import CommandOptions
@@ -12,6 +15,12 @@ from sonata_tasks.execution.ports import CommandTaskExecutor
 
 @dataclass(frozen=True, slots=True)
 class HelmReleaseSpec:
+    """A Helm release to manage.
+
+    ``values`` holds the extra ``--set``/``-f`` arguments passed through
+    verbatim, and ``timeout`` bounds how long install and uninstall wait.
+    """
+
     release: str
     chart: str
     namespace: str
@@ -20,6 +29,8 @@ class HelmReleaseSpec:
 
 
 class HelmInstallTask(CommandTask):
+    """Install a release, upgrading it if it already exists."""
+
     def __init__(
         self,
         spec: HelmReleaseSpec,
@@ -28,6 +39,11 @@ class HelmInstallTask(CommandTask):
         role: str = "host",
         options: CommandOptions | None = None,
     ) -> None:
+        """Configure ``helm upgrade --install`` for ``spec``.
+
+        The namespace is created if needed and the command waits for the
+        release to become ready, up to ``spec.timeout``.
+        """
         super().__init__(
             title=f"Install Helm release {spec.release}",
             argv=(
@@ -51,6 +67,8 @@ class HelmInstallTask(CommandTask):
 
 
 class HelmUninstallTask(CommandTask):
+    """Uninstall a release, tolerating one that is already gone."""
+
     def __init__(
         self,
         spec: HelmReleaseSpec,
@@ -59,6 +77,7 @@ class HelmUninstallTask(CommandTask):
         role: str = "host",
         options: CommandOptions | None = None,
     ) -> None:
+        """Configure ``helm uninstall`` for ``spec``, waiting for teardown."""
         super().__init__(
             title=f"Uninstall Helm release {spec.release}",
             argv=(
@@ -84,6 +103,11 @@ def helm_release_resource(
     options: CommandOptions | None = None,
     requires: tuple[Resource[Any], ...] = (),
 ) -> Resource[HelmReleaseSpec]:
+    """Install ``spec`` and return it on acquire, uninstalling it on failure.
+
+    Acquiring runs :class:`HelmInstallTask` and yields the spec; a failed
+    acquire compensates by running :class:`HelmUninstallTask`.
+    """
     install = HelmInstallTask(spec, executor=executor, role=role, options=options)
     uninstall = HelmUninstallTask(spec, executor=executor, role=role, options=options)
 

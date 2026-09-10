@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
+
 from sonata_tasks.prometheus import HttpPrometheusClient, PrometheusRetryPolicy
 
 
@@ -44,12 +45,15 @@ def test_query_range_preserves_series_labels_and_samples() -> None:
 
     series = client.query_range(
         "requests_total",
-        datetime(2026, 1, 1, tzinfo=timezone.utc),
-        datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
         5,
     )
 
-    assert [dict(item.labels) for item in series] == [{"tenant": "one"}, {"tenant": "two"}]
+    assert [dict(item.labels) for item in series] == [
+        {"tenant": "one"},
+        {"tenant": "two"},
+    ]
     assert [(sample.timestamp, sample.value) for sample in series[0].samples] == [
         (1.0, 2.5),
         (2.0, 3.0),
@@ -70,9 +74,7 @@ def test_transport_errors_retry_only_as_configured() -> None:
         sleep=sleeps.append,
     )
 
-    assert (
-        len(client.query_range("up", datetime.now(timezone.utc), datetime.now(timezone.utc))) == 2
-    )
+    assert len(client.query_range("up", datetime.now(UTC), datetime.now(UTC))) == 2
     assert sleeps == [0.25]
 
 
@@ -102,7 +104,9 @@ def test_exhausted_transport_errors_are_reported() -> None:
         (_response({"status": "success"}), "no data"),
     ],
 )
-def test_protocol_failures_remain_distinct(response: httpx.Response, message: str) -> None:
+def test_protocol_failures_remain_distinct(
+    response: httpx.Response, message: str
+) -> None:
     client = HttpPrometheusClient("http://prometheus", client=FakeHttpClient(response))
 
     with pytest.raises(RuntimeError, match=message):
@@ -126,7 +130,7 @@ def test_query_range_rejects_malformed_series(data: object) -> None:
     )
 
     with pytest.raises(RuntimeError, match="invalid prometheus"):
-        client.query_range("up", datetime.now(timezone.utc), datetime.now(timezone.utc))
+        client.query_range("up", datetime.now(UTC), datetime.now(UTC))
 
 
 def test_server_time_parses_a_scalar() -> None:
@@ -144,10 +148,12 @@ def test_server_time_parses_a_scalar() -> None:
 def test_server_time_rejects_an_invalid_scalar(result: object) -> None:
     client = HttpPrometheusClient(
         "http://prometheus",
-        client=FakeHttpClient(_response({"status": "success", "data": {"result": result}})),
+        client=FakeHttpClient(
+            _response({"status": "success", "data": {"result": result}})
+        ),
     )
 
-    with pytest.raises(RuntimeError, match="prometheus time|unexpected prometheus"):
+    with pytest.raises(RuntimeError, match=r"prometheus time|unexpected prometheus"):
         client.server_time()
 
 

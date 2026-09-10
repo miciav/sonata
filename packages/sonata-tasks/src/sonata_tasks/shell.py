@@ -1,4 +1,5 @@
-# Shell backend: shellcraft re-exports + workflow-aware SubprocessShell.
+"""Shell backend: shellcraft re-exports plus a workflow-aware SubprocessShell."""
+
 from __future__ import annotations
 
 from typing import override
@@ -13,7 +14,6 @@ from shellcraft.backend import (
 from shellcraft.backend import (
     SubprocessShell as _ShellcraftSubprocessShell,
 )
-
 from sonata_engine.workflow.context import has_workflow_sink
 from sonata_engine.workflow.reporting import workflow_log
 

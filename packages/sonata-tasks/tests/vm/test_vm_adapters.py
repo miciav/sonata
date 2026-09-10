@@ -4,14 +4,21 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from sonata_tasks.vm.adapters import VmLifecycleAdapter, azure_vm_adapter, multipass_vm_adapter
+
+from sonata_tasks.vm.adapters import (
+    VmLifecycleAdapter,
+    azure_vm_adapter,
+    multipass_vm_adapter,
+)
 from sonata_tasks.vm.models import VmConfig, VmInfo, VmRequest
 
 
 def _make_orchestrator(host: str = "10.0.0.1") -> MagicMock:
     orch = MagicMock()
     orch.connection_host.return_value = host
-    orch.ensure_running.return_value = SimpleNamespace(return_code=0, stdout="", stderr="")
+    orch.ensure_running.return_value = SimpleNamespace(
+        return_code=0, stdout="", stderr=""
+    )
     orch.teardown.return_value = SimpleNamespace(return_code=0, stdout="", stderr="")
     return orch
 
@@ -127,7 +134,10 @@ def test_proxmox_vm_adapter_propagates_credentials_to_destroy() -> None:
     )
     adapter = proxmox_vm_adapter(orch, credentials=credentials)
     info = VmInfo(
-        name="nanofaas-proxmox-loadgen", host="10.0.0.5", user="ubuntu", home="/home/ubuntu"
+        name="nanofaas-proxmox-loadgen",
+        host="10.0.0.5",
+        user="ubuntu",
+        home="/home/ubuntu",
     )
 
     adapter.destroy(info)

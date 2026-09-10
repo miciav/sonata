@@ -1,7 +1,8 @@
-"""Guard rail: Sonata must never import from downstream products or gain
-runtime dependencies. Sonata is a product-independent workflow engine that
-downstream products (nanoFaaS, controlplane-tool, VM-provider SDKs) will
-depend on -- never the other way around.
+"""Keep Sonata free of downstream-product imports and runtime dependencies.
+
+Sonata is a product-independent workflow engine that downstream products
+(nanoFaaS, controlplane-tool, VM-provider SDKs) will depend on -- never the
+other way around.
 """
 
 import ast
@@ -31,9 +32,12 @@ def _iter_imported_roots(tree: ast.Module) -> set[str]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 roots.add(alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            if node.module is not None and node.level == 0:
-                roots.add(node.module.split(".")[0])
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.level == 0
+        ):
+            roots.add(node.module.split(".")[0])
     return roots
 
 
@@ -42,11 +46,13 @@ def test_no_forbidden_imports_under_src() -> None:
     for path in sorted(SRC_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
         forbidden_hits = _iter_imported_roots(tree) & FORBIDDEN
-        for root in forbidden_hits:
-            violations.append(f"{path.relative_to(REPO_ROOT)} imports forbidden package '{root}'")
+        violations.extend(
+            f"{path.relative_to(REPO_ROOT)} imports forbidden package '{root}'"
+            for root in forbidden_hits
+        )
 
-    assert not violations, "Sonata must stay independent of downstream products:\n" + "\n".join(
-        violations
+    assert not violations, (
+        "Sonata must stay independent of downstream products:\n" + "\n".join(violations)
     )
 
 

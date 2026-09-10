@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -163,7 +163,11 @@ def test_single_consumer_resource_wraps_that_consumer() -> None:
 
     compiled = workflow.compile()
 
-    assert [ct.task.title for ct in compiled.tasks] == ["Acquire r", "Only", "Release r"]
+    assert [ct.task.title for ct in compiled.tasks] == [
+        "Acquire r",
+        "Only",
+        "Release r",
+    ]
 
 
 # --- Step 2: lifecycle -------------------------------------------------------
@@ -187,7 +191,9 @@ def test_releases_run_in_reverse_acquisition_order() -> None:
     ]
 
 
-def test_structurally_equal_resources_keep_distinct_runtime_values_and_releases() -> None:
+def test_structurally_equal_resources_keep_distinct_runtime_values_and_releases() -> (
+    None
+):
     acquired = iter(("first", "second"))
     released: list[str] = []
 
@@ -218,8 +224,12 @@ def test_resource_dependencies_acquire_and_release_in_dependency_order() -> None
     vm = _resource("vm", calls)
     helm = Resource(
         title="Acquire helm",
-        acquire=lambda inputs: calls.append(f"acquire.helm:{inputs.resource(vm)}") or "helm",
-        release=lambda inputs, _value: calls.append(f"release.helm:{inputs.resource(vm)}"),
+        acquire=lambda inputs: (
+            calls.append(f"acquire.helm:{inputs.resource(vm)}") or "helm"
+        ),
+        release=lambda inputs, _value: calls.append(
+            f"release.helm:{inputs.resource(vm)}"
+        ),
         requires=(vm,),
     )
     function = Resource(
@@ -227,7 +237,9 @@ def test_resource_dependencies_acquire_and_release_in_dependency_order() -> None
         acquire=lambda inputs: (
             calls.append(f"acquire.function:{inputs.resource(helm)}") or "function"
         ),
-        release=lambda inputs, _value: calls.append(f"release.function:{inputs.resource(helm)}"),
+        release=lambda inputs, _value: calls.append(
+            f"release.function:{inputs.resource(helm)}"
+        ),
         requires=(helm,),
     )
 
@@ -270,7 +282,7 @@ def test_resource_dependency_cycle_reports_the_cycle_path() -> None:
 
     with pytest.raises(
         ResourceDependencyCycleError,
-        match="Acquire first.*Acquire second.*Acquire first",
+        match=r"Acquire first.*Acquire second.*Acquire first",
     ):
         workflow.compile()
 
@@ -283,12 +295,14 @@ def test_direct_resource_dependency_cycle_reports_the_cycle_path() -> None:
 
     with pytest.raises(
         ResourceDependencyCycleError,
-        match="Acquire loop.*Acquire loop",
+        match=r"Acquire loop.*Acquire loop",
     ):
         workflow.compile()
 
 
-def test_shared_dependency_is_acquired_once_and_siblings_keep_declaration_order() -> None:
+def test_shared_dependency_is_acquired_once_and_siblings_keep_declaration_order() -> (
+    None
+):
     calls: list[str] = []
     vm = _resource("vm", calls)
     first = Resource(
@@ -417,7 +431,9 @@ def test_consumer_failure_and_release_failure_are_combined() -> None:
     def fail_release(_inputs: TaskInputs, _value: object) -> None:
         raise RuntimeError("release failed")
 
-    resource = Resource(title="Acquire res", acquire=lambda _inputs: None, release=fail_release)
+    resource = Resource(
+        title="Acquire res", acquire=lambda _inputs: None, release=fail_release
+    )
     workflow = _workflow()
     workflow.add(_RecordTask("Boom", [], fail=True), requires=(resource,))
 
@@ -432,7 +448,9 @@ def test_release_failure_alone_is_raised() -> None:
     def fail_release(_inputs: TaskInputs, _value: object) -> None:
         raise RuntimeError("release failed")
 
-    resource = Resource(title="Acquire res", acquire=lambda _inputs: None, release=fail_release)
+    resource = Resource(
+        title="Acquire res", acquire=lambda _inputs: None, release=fail_release
+    )
     workflow = _workflow()
     workflow.add(_RecordTask("Use", []), requires=(resource,))
 
@@ -441,10 +459,13 @@ def test_release_failure_alone_is_raised() -> None:
 
 
 def test_keep_retains_everything_that_did_not_ask_to_be_released() -> None:
-    """`keep` is about not paying to rebuild; `always_release` is about not
+    """Assert `keep` retains everything not marked `always_release`.
+
+    `keep` is about not paying to rebuild; `always_release` is about not
     leaving something behind. A resource holding a secret declares the latter,
     so the security property belongs to the resource, not to a classification
-    the caller has to get right."""
+    the caller has to get right.
+    """
     calls: list[str] = []
     vm = _resource("vm", calls)
     builder = _resource("builder", calls)
@@ -570,7 +591,9 @@ def test_retained_resource_emits_and_journals_skipped(tmp_path: Path) -> None:
     records = [
         record
         for record in (
-            json.loads(line) for line in config.path.read_text().splitlines() if line.strip()
+            json.loads(line)
+            for line in config.path.read_text().splitlines()
+            if line.strip()
         )
         if record.get("kind") != "retained"
     ]
@@ -580,10 +603,15 @@ def test_retained_resource_emits_and_journals_skipped(tmp_path: Path) -> None:
     assert release_statuses == ["pending", "skipped"]
 
 
-def test_keep_releases_when_the_retained_value_cannot_be_journaled(tmp_path: Path) -> None:
-    """A retention that cannot be written down is a promise that cannot be
+def test_keep_releases_when_the_retained_value_cannot_be_journaled(
+    tmp_path: Path,
+) -> None:
+    """Assert an unjournalable retention releases instead of holding.
+
+    A retention that cannot be written down is a promise that cannot be
     kept: the resource is released now rather than held with no way to
-    release it."""
+    release it.
+    """
     calls: list[str] = []
     vm = Resource(
         title="Acquire vm",
@@ -692,10 +720,13 @@ def test_finalizer_base_exception_remains_primary_after_task_failure() -> None:
 
 
 def test_dependency_chain_releases_in_reverse_on_failure_path() -> None:
-    """A fn -> helm -> vm resource chain releases through the runner's `pending`
+    """Assert a failing dependency chain releases in reverse acquisition order.
+
+    A fn -> helm -> vm resource chain releases through the runner's `pending`
     list (the failure path), not the linear release units the passing tests
     exercise. Release order must still be reverse-acquisition, and each release
-    must still be able to read its dependency's value."""
+    must still be able to read its dependency's value.
+    """
     calls: list[str] = []
 
     vm = Resource(
@@ -705,15 +736,22 @@ def test_dependency_chain_releases_in_reverse_on_failure_path() -> None:
     )
     helm = Resource(
         title="Acquire helm",
-        acquire=lambda inputs: calls.append(f"acquire.helm:{inputs.resource(vm)}")
-        or "helm-value",
-        release=lambda inputs, value: calls.append(f"release.helm:{value}:{inputs.resource(vm)}"),
+        acquire=lambda inputs: (
+            calls.append(f"acquire.helm:{inputs.resource(vm)}") or "helm-value"
+        ),
+        release=lambda inputs, value: calls.append(
+            f"release.helm:{value}:{inputs.resource(vm)}"
+        ),
         requires=(vm,),
     )
     fn = Resource(
         title="Acquire fn",
-        acquire=lambda inputs: calls.append(f"acquire.fn:{inputs.resource(helm)}") or "fn-value",
-        release=lambda inputs, value: calls.append(f"release.fn:{value}:{inputs.resource(helm)}"),
+        acquire=lambda inputs: (
+            calls.append(f"acquire.fn:{inputs.resource(helm)}") or "fn-value"
+        ),
+        release=lambda inputs, value: calls.append(
+            f"release.fn:{value}:{inputs.resource(helm)}"
+        ),
         requires=(helm,),
     )
     workflow = _workflow()
@@ -737,14 +775,18 @@ def test_dependency_chain_releases_in_reverse_on_failure_path() -> None:
 
 
 def _diamond_resource(depth: int) -> Resource:
-    """A `depth`-level diamond: each level's combiner `c{level}` requires two
-    siblings `a{level}`/`b{level}` that both require the previous level's
-    combiner. `register()` re-walking a 'done' node's whole subtree on every
-    path to it (instead of returning early) doubles the work per level on a
-    graph shaped like this -- exponential in `depth`.
+    """Build a `depth`-level diamond resource graph.
+
+    Each level's combiner `c{level}` requires two siblings
+    `a{level}`/`b{level}` that both require the previous level's combiner.
+    `register()` re-walking a 'done' node's whole subtree on every path to it
+    (instead of returning early) doubles the work per level on a graph shaped
+    like this -- exponential in `depth`.
     """
     current = Resource(
-        title="Acquire leaf", acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+        title="Acquire leaf",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
     )
     for level in range(depth):
         a = Resource(
@@ -780,7 +822,9 @@ def test_deep_diamond_resource_graph_compiles_deterministically_and_fast() -> No
     second = workflow.compile()
 
     resource_count = 1 + 3 * depth  # leaf + (a, b, c) per level
-    expected_task_count = 2 * resource_count + 1  # acquire + release per resource + consumer
+    expected_task_count = (
+        2 * resource_count + 1
+    )  # acquire + release per resource + consumer
 
     assert first == second, "same definitions in must produce same compiled IDs out"
     assert len(first.tasks) == expected_task_count
@@ -788,4 +832,6 @@ def test_deep_diamond_resource_graph_compiles_deterministically_and_fast() -> No
     assert first.tasks[resource_count].task_id == f"{resource_count + 1:03d}.use"
     # Regression guard: pre-fix this graph was exponential in depth (depth=26 took
     # ~34s in measurement); post-fix it stays well under a second even at depth=40.
-    assert elapsed < 2.0, f"compile() took {elapsed:.2f}s -- exponential blowup regression?"
+    assert elapsed < 2.0, (
+        f"compile() took {elapsed:.2f}s -- exponential blowup regression?"
+    )

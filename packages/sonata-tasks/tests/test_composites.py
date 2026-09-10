@@ -1,13 +1,15 @@
 from pathlib import Path
 
+from sonata_engine import Workflow
+
 from sonata_tasks.composites import command_specs_composite, command_specs_fingerprint
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec
 from sonata_tasks.testing import RecordingExecutor
 
-from sonata_engine import Workflow
 
-
-def _spec(*argv: str, role: str = "builder", summary: str = "Build artifact") -> CommandTaskSpec:
+def _spec(
+    *argv: str, role: str = "builder", summary: str = "Build artifact"
+) -> CommandTaskSpec:
     return CommandTaskSpec(
         task_id="ignored",
         summary=summary,

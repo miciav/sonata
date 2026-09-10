@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+
 from sonata_tasks.registry import docker_registry_resource
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
 
 
 @dataclass

@@ -1,9 +1,14 @@
 .coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .scannerwork/
 .venv/
 .worktrees/
 __pycache__/
 *.egg-info/
+build/
 dist/

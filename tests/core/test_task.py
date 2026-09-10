@@ -92,7 +92,9 @@ def test_task_inputs_only_exposes_declared_resource_values() -> None:
         release=lambda _inputs, _value: None,
     )
 
-    inputs = TaskInputs._for_resources({database: "postgres://db", cache: None}, {database})
+    inputs = TaskInputs._for_resources(
+        {database: "postgres://db", cache: None}, {database}
+    )
 
     assert inputs.resource(database) == "postgres://db"
     with pytest.raises(UndeclaredResourceError):
@@ -140,9 +142,11 @@ def test_task_inputs_resource_preserves_its_static_type() -> None:
 
 
 def test_invalid_run_override_fails_static_type_check() -> None:
-    """The negative fixture (InvalidTask.run returning None) must fail
-    basedpyright. Run as a subprocess so the normal type-check suite
-    (`uv run basedpyright`, scoped to src/) stays green.
+    """Assert the negative type-check fixture fails basedpyright.
+
+    The fixture (`InvalidTask.run` returning `None`) must fail basedpyright.
+    Run as a subprocess so the normal type-check suite (`uv run basedpyright`,
+    scoped to src/) stays green.
     """
     fixture = Path(__file__).parent.parent / "typecheck" / "task_contracts.py"
     result = subprocess.run(

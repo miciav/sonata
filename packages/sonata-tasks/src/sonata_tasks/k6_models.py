@@ -1,3 +1,5 @@
+"""Configuration and result types for k6 load runs."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -9,12 +11,20 @@ from types import MappingProxyType
 
 @dataclass(frozen=True, slots=True)
 class K6Stage:
+    """One ramp stage: how long to hold, and how many virtual users."""
+
     duration: str
     target: int
 
 
 @dataclass(frozen=True, slots=True)
 class K6Config:
+    """Everything a k6 run needs: the script, its output, and its load.
+
+    ``vus`` and ``duration`` drive a constant-load run; when neither is set,
+    ``stages`` is used instead. ``env`` entries are exported to the script.
+    """
+
     script_path: Path
     summary_output_path: Path
     stages: tuple[K6Stage, ...] = ()
@@ -23,6 +33,7 @@ class K6Config:
     duration: str | None = None
 
     def __post_init__(self) -> None:
+        """Normalize paths and freeze ``stages`` and ``env``."""
         object.__setattr__(self, "script_path", Path(self.script_path))
         object.__setattr__(self, "summary_output_path", Path(self.summary_output_path))
         object.__setattr__(self, "stages", tuple(self.stages))
@@ -31,6 +42,8 @@ class K6Config:
 
 @dataclass(frozen=True, slots=True)
 class K6RunResult:
+    """What a k6 run produced: its summary file, timing, and threshold verdict."""
+
     summary_path: Path
     started_at: datetime
     ended_at: datetime

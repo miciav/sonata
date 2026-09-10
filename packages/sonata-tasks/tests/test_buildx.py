@@ -3,10 +3,10 @@
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+
 from sonata_tasks.buildx import buildx_builder_resource
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
 
 
 @dataclass
@@ -37,7 +37,9 @@ class RecordingExecutor:
         if "--bootstrap" in task.argv and self.fail_bootstrap:
             return TaskResult(task_id="", status="failed", return_code=1, stderr="boom")
         if "create" in task.argv and self.fail_create:
-            return TaskResult(task_id="", status="failed", return_code=1, stderr="partial create")
+            return TaskResult(
+                task_id="", status="failed", return_code=1, stderr="partial create"
+            )
         return TaskResult(task_id="", status="passed", return_code=0)
 
 
@@ -117,7 +119,9 @@ def test_buildx_builder_can_replace_and_cleanup_a_stale_named_builder() -> None:
     assert commands.count(("docker", "buildx", "rm", "--force", "release-arm")) == 2
 
 
-def test_buildx_builder_uses_buildkit_config_validates_and_compensates_bootstrap() -> None:
+def test_buildx_builder_uses_buildkit_config_validates_and_compensates_bootstrap() -> (
+    None
+):
     executor = RecordingExecutor(fail_bootstrap=True)
     resource = buildx_builder_resource(
         name="arm-builder",
@@ -140,9 +144,17 @@ def test_buildx_builder_uses_buildkit_config_validates_and_compensates_bootstrap
 
 def test_buildx_builder_compensates_a_failed_partial_create() -> None:
     executor = RecordingExecutor(fail_create=True)
-    resource = buildx_builder_resource(name="arm-builder", executor=executor, role="arm-builder")
+    resource = buildx_builder_resource(
+        name="arm-builder", executor=executor, role="arm-builder"
+    )
 
     with pytest.raises(RuntimeError, match="partial create"):
         resource.acquire(TaskInputs.empty())
 
-    assert executor.seen[-1].argv == ("docker", "buildx", "rm", "--force", "arm-builder")
+    assert executor.seen[-1].argv == (
+        "docker",
+        "buildx",
+        "rm",
+        "--force",
+        "arm-builder",
+    )

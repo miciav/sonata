@@ -1,8 +1,15 @@
+"""The exception hierarchy raised by the engine.
+
+Every error a workflow author can catch lives here, so a caller can import them
+all from one module. They carry a message describing what went wrong and the
+context needed to act on it; none of them define extra attributes.
+"""
+
 from __future__ import annotations
 
 
 class InvalidTaskOutcomeError(Exception):
-    """Raised when a compiled task's `run()` returns something other than `TaskOutcome`."""
+    """Raised when a task's `run()` returns something other than `TaskOutcome`."""
 
 
 class UndeclaredResourceError(Exception):
@@ -26,7 +33,7 @@ class ResumeConfigurationError(Exception):
 
 
 class AmbiguousTaskStateError(Exception):
-    """Raised when a journal's recorded state cannot be resumed automatically and safely.
+    """Raised when a journal's recorded state cannot be safely resumed automatically.
 
     Covers both a non-idempotent task interrupted after `started` with no terminal
     record, and a non-idempotent task with a genuinely recorded `failed`: resuming
@@ -36,7 +43,7 @@ class AmbiguousTaskStateError(Exception):
 
 
 class UnsupportedJournalSchemaError(Exception):
-    """Raised when a journal record declares a `schema_version` this engine cannot read."""
+    """Raised when a record declares a `schema_version` this engine cannot read."""
 
 
 class WorkflowTopologyMismatchError(Exception):

@@ -4,8 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+
 from sonata_tasks.errors import UnsupportedCommandOptionError
-from sonata_tasks.execution.adapters import HostCommandTaskExecutor, VmCommandTaskExecutor
+from sonata_tasks.execution.adapters import (
+    HostCommandTaskExecutor,
+    VmCommandTaskExecutor,
+)
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec
 
 
@@ -71,7 +75,9 @@ def test_host_adapter_forwards_supported_options() -> None:
     "options",
     [CommandOptions(remote_dir="/srv/app"), CommandOptions(timeout_seconds=1)],
 )
-def test_host_adapter_rejects_unsupported_options_before_running(options: CommandOptions) -> None:
+def test_host_adapter_rejects_unsupported_options_before_running(
+    options: CommandOptions,
+) -> None:
     runner = _Host()
     executor = HostCommandTaskExecutor(runner)
     with pytest.raises(UnsupportedCommandOptionError):
@@ -92,7 +98,9 @@ def test_vm_adapter_forwards_remote_options() -> None:
     "options",
     [CommandOptions(cwd=Path("/repo")), CommandOptions(timeout_seconds=1)],
 )
-def test_vm_adapter_rejects_unsupported_options_before_running(options: CommandOptions) -> None:
+def test_vm_adapter_rejects_unsupported_options_before_running(
+    options: CommandOptions,
+) -> None:
     runner = _Vm()
     executor = VmCommandTaskExecutor(runner, target_key="vm:builder")
     with pytest.raises(UnsupportedCommandOptionError):

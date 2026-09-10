@@ -1,3 +1,5 @@
+"""Manage a docker buildx builder as a resource."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -5,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.execution.models import CommandOptions, TaskResult
@@ -56,6 +59,19 @@ def buildx_builder_resource(
     validation_key: str | None = None,
     replace_existing: bool = False,
 ) -> Resource[str]:
+    """Acquire a named docker buildx builder, bootstrapping it when missing.
+
+    Acquiring inspects the builder. A missing one — or one that
+    ``replace_existing`` asks to redo, which is removed first — is created as a
+    ``docker-container`` builder with ``--use``, bootstrapped, and checked
+    through ``validate``. Acquiring returns the builder name for a builder this
+    resource created, or ``"existing"`` when it left a pre-existing builder
+    untouched; releasing removes only the former.
+
+    Raises:
+        ValueError: If ``validate`` is configured without a ``validation_key``.
+
+    """
     if validate is not None and not validation_key:
         raise ValueError("validation_key is required when validate is configured")
     current = options or CommandOptions()
@@ -65,11 +81,19 @@ def buildx_builder_resource(
 
     def bootstrap(inputs: TaskInputs) -> None:
         try:
-            _ = _run(inputs, executor, role, current, *_create_argv(name, buildkitd_config))
-            result = _run(inputs, executor, role, current, "inspect", "--bootstrap", name)
+            _ = _run(
+                inputs, executor, role, current, *_create_argv(name, buildkitd_config)
+            )
+            result = _run(
+                inputs, executor, role, current, "inspect", "--bootstrap", name
+            )
             _validate_output(validate, result.stdout)
         except BaseException as error:
-            best_effort(error, lambda: remove(inputs), what=f"cleanup failed buildx builder {name}")
+            best_effort(
+                error,
+                lambda: remove(inputs),
+                what=f"cleanup failed buildx builder {name}",
+            )
             raise
 
     def acquire(inputs: TaskInputs) -> str:

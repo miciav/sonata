@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.skopeo import SkopeoCopyTask, SkopeoInspectTask
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
 
 
 @dataclass
@@ -20,7 +20,9 @@ class RecordingExecutor:
 
     def run(self, task: CommandTaskSpec, *, dry_run: bool = False) -> TaskResult:
         self.seen.append(task)
-        return TaskResult(task_id="", status="passed", return_code=0, stdout=self.stdout)
+        return TaskResult(
+            task_id="", status="passed", return_code=0, stdout=self.stdout
+        )
 
 
 @dataclass
@@ -51,8 +53,8 @@ class TestSkopeoCopyTask:
         task.run(TaskInputs.empty())
 
         assert (
-            task.title
-            == "Copy image reg.ecr.us-east-1.amazonaws.com/app:1.0.0 -> localhost:5000/app:1.0.0"
+            task.title == "Copy image reg.ecr.us-east-1.amazonaws.com/app:1.0.0 -> "
+            "localhost:5000/app:1.0.0"
         )
         assert executor.seen[0].argv == (
             "skopeo",

@@ -21,7 +21,9 @@ EXTRA_IMPORTS = {
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--extra", action="append", choices=tuple(EXTRA_IMPORTS), default=[])
+    parser.add_argument(
+        "--extra", action="append", choices=tuple(EXTRA_IMPORTS), default=[]
+    )
     args = parser.parse_args()
     wheel = args.wheel.resolve()
     if not wheel.is_file():
@@ -50,7 +52,9 @@ def main() -> None:
             f"[importlib.import_module(name) for name in {extra_modules!r}]"
         )
         subprocess.run((str(python), "-c", code), cwd=directory, check=True)
-        example = Path(__file__).resolve().parents[1] / "examples" / "shared_tasks_client.py"
+        example = (
+            Path(__file__).resolve().parents[1] / "examples" / "shared_tasks_client.py"
+        )
         subprocess.run((str(python), str(example)), cwd=directory, check=True)
 
 

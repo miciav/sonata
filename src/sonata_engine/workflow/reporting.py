@@ -1,7 +1,14 @@
+"""Reporting helpers that task code calls: log lines and status blocks.
+
+Each helper resolves the active sink and does nothing when none is bound, so
+task code can report unconditionally without checking whether anyone is
+listening.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 from sonata_engine.workflow.context import (
     active_sink,
@@ -24,11 +31,24 @@ def _emit(event: WorkflowEvent) -> None:
 def workflow_log(
     message: str, *, stream: str = "stdout", context: WorkflowContext | None = None
 ) -> None:
-    _emit(build_log_event(line=message, stream=stream, context=context or get_workflow_context()))
+    """Emit `message` as one `log.line` event on `stream`.
+
+    Does nothing when no sink is bound. The event takes its identity from
+    `context`, or from the active workflow context when none is given.
+    """
+    _emit(
+        build_log_event(
+            line=message, stream=stream, context=context or get_workflow_context()
+        )
+    )
 
 
 @contextmanager
 def status(label: str) -> Generator[None, None, None]:
+    """Show `label` as in-progress for the duration of the block.
+
+    Delegates to the bound sink; with no sink bound the block just runs.
+    """
     sink = active_sink()
     if sink is not None:
         with sink.status(label):
@@ -89,7 +109,9 @@ def _task_lifecycle(
                     )
                 )
             except BaseException as reporting_error:  # NOSONAR S5754 - sink failure is noted on the original exc, which is re-raised  # noqa: E501
-                exc.add_note(f"Failed to emit task.failed for {task_id}: {reporting_error}")
+                exc.add_note(
+                    f"Failed to emit task.failed for {task_id}: {reporting_error}"
+                )
             raise
         else:
             _emit(

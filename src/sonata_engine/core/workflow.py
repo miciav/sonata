@@ -1,3 +1,12 @@
+"""The workflow builder, its compiler, and the runner that executes it.
+
+`Workflow` records tasks in the order they were added, `compile()` rewrites them
+into a flat sequence of `CompiledTask` units with resources spliced in around
+their consumers, and `_run_compiled` executes that sequence -- owning the
+journal records, the resume decisions, the lifecycle events, and the cleanup
+that runs when a task fails part way through.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -65,7 +74,7 @@ def _resolve_slug(slugs: list[str], wanted: str) -> int:
 def _maybe_resume_skip(
     *, task_id: str, task: Task[Any], jrnl: Journal | None, resume: bool
 ) -> TaskExecution | None:
-    """The 'skipped' execution when resume says skip; None otherwise."""
+    """Return the 'skipped' execution when resume says skip, and None otherwise."""
     if jrnl is None or not resume:
         return None
     if jrnl.decide_task(task_id, task) != "skip":
@@ -176,7 +185,9 @@ class _MergeState:
     seen_at_index: dict[int, int] = field(default_factory=dict)
 
 
-def _register_dependency(state: _MergeState, resource: Resource[Any], index: int) -> None:
+def _register_dependency(
+    state: _MergeState, resource: Resource[Any], index: int
+) -> None:
     """Register one resource at one consumer index, walking its dependencies.
 
     Depth-first visit; cycles raise `ResourceDependencyCycleError`. A 'done'
@@ -270,7 +281,11 @@ class Workflow:
         """
         if resume and journal is None:
             raise ResumeConfigurationError("resume=True requires a JournalConfig")
-        jrnl = Journal(journal, compiled, verifiers, resume=resume) if journal is not None else None
+        jrnl = (
+            Journal(journal, compiled, verifiers, resume=resume)
+            if journal is not None
+            else None
+        )
 
         self._retention_order = 0
         release_for = {
@@ -279,7 +294,8 @@ class Workflow:
             if task.kind == "release" and task.resource is not None
         }
         retained_resources = self._retained_resources(compiled)
-        # Release units for acquired-but-not-yet-released resources, in acquisition order.
+        # Release units for acquired-but-not-yet-released resources, in
+        # acquisition order.
         pending: list[CompiledTask[object]] = []
         release_errors: list[BaseException] = []
         main_error: BaseException | None = None
@@ -314,7 +330,9 @@ class Workflow:
             main_error = exc
 
         if main_error is not None:
-            self._release_pending(pending, release_errors, state, jrnl, retained_resources)
+            self._release_pending(
+                pending, release_errors, state, jrnl, retained_resources
+            )
         self._raise_final(main_error, release_errors)
         return WorkflowResult(workflow_id=compiled.workflow_id, tasks=tuple(executions))
 
@@ -346,7 +364,9 @@ class Workflow:
     ) -> None:
         """Run every pending release in reverse acquisition order."""
         for compiled_task in reversed(pending):
-            self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+            self._release(
+                compiled_task, release_errors, state, jrnl, retained_resources
+            )
 
     def _run_release_step(
         self,
@@ -359,7 +379,9 @@ class Workflow:
         retained_resources: frozenset[int],
     ) -> None:
         """Run one release unit in the main walk, collecting its outcome."""
-        execution = self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+        execution = self._release(
+            compiled_task, release_errors, state, jrnl, retained_resources
+        )
         if execution is not None:
             executions.append(execution)
         pending[:] = [p for p in pending if p is not compiled_task]
@@ -370,7 +392,7 @@ class Workflow:
         release_for: Mapping[int, CompiledTask[object]],
         pending: list[CompiledTask[object]],
     ) -> Callable[[], None] | None:
-        """The release-unit callback for an acquire unit; None for consumers."""
+        """Return the callback that queues an acquire unit's release, else None."""
         if compiled_task.kind != "acquire":
             return None
         resource = compiled_task.resource
@@ -381,8 +403,13 @@ class Workflow:
     def _raise_final(
         self, main_error: BaseException | None, release_errors: list[BaseException]
     ) -> None:
-        """Raise the run's outcome: critical errors first, then the primary
-        error with cleanup notes, else the collected cleanup errors."""
+        """Raise the run's outcome once the walk and any cleanup have finished.
+
+        A critical error (`KeyboardInterrupt`, `SystemExit`) wins over everything
+        and carries the others as notes. Otherwise the primary task error is
+        raised, or `RuntimeError` if there were also cleanup errors, or the
+        cleanup errors alone when the tasks themselves succeeded.
+        """
         critical_error = (
             main_error
             if main_error is not None and not isinstance(main_error, Exception)
@@ -422,22 +449,24 @@ class Workflow:
         resume: bool,
         on_executed: Callable[[], None] | None = None,
     ) -> TaskExecution:
-        """Run one consumer/acquire unit, recording its journal outcome. Raises on failure.
+        """Run one consumer or acquire unit, recording its journal outcome.
 
-        Consumers and acquire units consult the same resume decision matrix.
-        `Resource.acquire_idempotent` controls whether an interrupted or failed
-        acquire can retry; a passed acquire always reruns because it is non-reusable.
-        Releases are handled separately by `_release`.
+        A failure is recorded and then propagates. Consumers and acquire units
+        consult the same resume decision matrix. `Resource.acquire_idempotent`
+        controls whether an interrupted or failed acquire can retry; a passed
+        acquire always reruns because it is non-reusable. Releases are handled
+        separately by `_release`.
 
-        A journal-write failure here is allowed to propagate (treated like any other
-        task failure) -- unlike `_release`, which must keep attempting every pending
-        release even if the journal itself is failing.
+        A journal-write failure here is allowed to propagate (treated like any
+        other task failure) -- unlike `_release`, which must keep attempting
+        every pending release even if the journal itself is failing.
         """
 
         def make_inputs() -> TaskInputs:
             base = state.inputs_for(
                 compiled_task.resource.requires
-                if compiled_task.kind == "acquire" and compiled_task.resource is not None
+                if compiled_task.kind == "acquire"
+                and compiled_task.resource is not None
                 else compiled_task.required_resources
             )
             return cast(
@@ -471,10 +500,12 @@ class Workflow:
     def _record_release_outcome(
         self, release_errors: list[BaseException], record: Callable[[], None]
     ) -> None:
-        """Run a `jrnl.record_*` call, collecting a journal I/O failure instead of
-        letting it propagate. Cleanup must keep attempting every pending release even
-        if the journal itself is failing (e.g. disk full) -- a journal-write error here
-        must never mask the real release failure or abort the reverse-release loop."""
+        """Run a journal write, collecting an I/O failure rather than propagating it.
+
+        Cleanup must keep attempting every pending release even if the journal
+        itself is failing (e.g. disk full) -- a journal-write error here must
+        never mask the real release failure or abort the reverse-release loop.
+        """
         try:
             record()
         except OSError as exc:
@@ -515,7 +546,9 @@ class Workflow:
             with _task_lifecycle(task_id=task_id, title=compiled_task.task.title):
                 if resource is None:
                     raise RuntimeError("release task has no resource")
-                outcome = compiled_task.task.run(state.inputs_for((resource, *resource.requires)))
+                outcome = compiled_task.task.run(
+                    state.inputs_for((resource, *resource.requires))
+                )
                 if not isinstance(outcome, TaskOutcome):
                     raise InvalidTaskOutcomeError(
                         f"{task_id} returned {outcome!r}, expected TaskOutcome"
@@ -546,15 +579,17 @@ class Workflow:
         state: _RunState,
         jrnl: Journal | None,
     ) -> TaskExecution | None:
-        """Record the retention and report the skipped release; None when the
-        record could not be written (the caller then releases for real).
+        """Record the retention and report the skipped release.
+
+        Returns `None` when the retention record could not be written, in which
+        case the caller falls through and releases the resource for real.
 
         Retention is a promise that a later run can finish the job, and that
         run will have no `_RunState`. With a journal configured, a promise
-        that cannot be written down cannot be kept, so the caller falls
-        through and releases now: a resource held with no way to release it
-        is worse than one released early. Without a journal there is nothing
-        to record, and the retention is kept silently.
+        that cannot be written down cannot be kept, so releasing now is the
+        lesser evil: a resource held with no way to release it is worse than
+        one released early. Without a journal there is nothing to record, and
+        the retention is kept silently.
         """
         if jrnl is not None and not jrnl.record_retained(
             resource.title, self._retention_order, state.values.get(id(resource))
@@ -574,7 +609,9 @@ class Workflow:
         except BaseException as exc:  # NOSONAR S5754 - a reporting failure must not abort the retention skip  # noqa: E501
             release_errors.append(exc)
         state.remove(resource)
-        return TaskExecution(task_id=compiled_task.task_id, status="skipped", outcome=None)
+        return TaskExecution(
+            task_id=compiled_task.task_id, status="skipped", outcome=None
+        )
 
     def add(self, task: Task[Any], requires: tuple[Resource, ...] = ()) -> Workflow:
         """Record a task definition and the resources it consumes. Order preserved."""
@@ -612,10 +649,16 @@ class Workflow:
         )
         return CompiledWorkflow(workflow_id=self.workflow_id, tasks=compiled_tasks)
 
-    def _select(self, select: Selection | None) -> list[tuple[Task[Any], tuple[Resource, ...]]]:
-        """Filter consumer definitions by title slug, leaving resources to the compiler."""
+    def _select(
+        self, select: Selection | None
+    ) -> list[tuple[Task[Any], tuple[Resource, ...]]]:
+        """Filter consumer definitions by title slug.
+
+        Resources are left to the compiler, which re-splices their acquire and
+        release units around whichever consumers survive.
+        """
         slugs = [_slugify(task.title) for task, _requires in self._definitions]
-        for slug, (task, _requires) in zip(slugs, self._definitions):
+        for slug, (task, _requires) in zip(slugs, self._definitions, strict=True):
             if not slug:
                 raise ValueError(f"task title {task.title!r} produces an empty slug")
         if select is None or select.is_empty:
@@ -629,7 +672,9 @@ class Workflow:
             else len(self._definitions) - 1
         )
         if first > last:
-            raise SelectionError(f"start {select.start!r} comes after until {select.until!r}")
+            raise SelectionError(
+                f"start {select.start!r} comes after until {select.until!r}"
+            )
         return list(self._definitions[first : last + 1])
 
     def _merge_resources(
@@ -675,7 +720,9 @@ class Workflow:
                     )
                 )
             merged.append(
-                CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")
+                CompiledTask(
+                    task_id="", task=task, required_resources=requires, kind="consumer"
+                )
             )
             for key in releases_after.get(index, ()):
                 resource = state.resources[key]

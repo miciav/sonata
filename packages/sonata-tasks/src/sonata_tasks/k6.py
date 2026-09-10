@@ -1,11 +1,14 @@
+"""Run a k6 load test and report whether its thresholds passed."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import override
 
 from sonata_engine import Task, TaskInputs, TaskOutcome
+
 from sonata_tasks.core.fingerprint import fingerprint_digest
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec
 from sonata_tasks.execution.ports import CommandTaskExecutor
@@ -15,6 +18,13 @@ K6ConfigSource = K6Config | Callable[[TaskInputs], K6Config]
 
 
 def k6_argv(config: K6Config) -> tuple[str, ...]:
+    """Build the ``k6 run`` argv for ``config``.
+
+    A summary is always exported to ``config.summary_output_path`` with the
+    usual trend stats. ``vus``/``duration`` add the constant-load flags, or
+    ``stages`` add one ``--stage duration:target`` per stage when neither is
+    set; ``env`` adds ``-e key=value`` pairs.
+    """
     argv = [
         "k6",
         "run",
@@ -37,6 +47,14 @@ def k6_argv(config: K6Config) -> tuple[str, ...]:
 
 
 class K6Task(Task[K6RunResult]):
+    """Run k6 through an executor and translate its exit code to a result.
+
+    k6 exits 0 when all thresholds pass and 99 when they fail. Either is a
+    completed run and yields a :class:`K6RunResult` whose ``passed`` reflects
+    the code; any other code raises ``RuntimeError``. Set ``require_pass`` to
+    turn a threshold failure into an error as well.
+    """
+
     def __init__(
         self,
         config: K6ConfigSource,
@@ -48,6 +66,18 @@ class K6Task(Task[K6RunResult]):
         semantic_key: str | None = None,
         require_pass: bool = False,
     ) -> None:
+        """Configure the run.
+
+        ``config`` is a fixed :class:`K6Config` or a callable deriving one from
+        the task inputs; because a callable cannot be fingerprinted from its
+        result, the callable form requires its own ``semantic_key``. This task
+        owns the expected exit codes, so ``options`` must not narrow them.
+
+        Raises:
+            ValueError: If ``config`` is callable without a ``semantic_key``, or
+                if ``options`` sets expected exit codes other than ``{0}``.
+
+        """
         if callable(config) and not semantic_key:
             raise ValueError("semantic_key is required for a dynamic k6 config")
         current = options or CommandOptions()
@@ -65,7 +95,7 @@ class K6Task(Task[K6RunResult]):
     @override
     def run(self, inputs: TaskInputs) -> TaskOutcome[K6RunResult]:
         config = self._config(inputs) if callable(self._config) else self._config
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         result = self._executor.run(
             CommandTaskSpec(
                 task_id="",
@@ -75,15 +105,20 @@ class K6Task(Task[K6RunResult]):
                 options=self._options,
             )
         )
-        ended_at = datetime.now(timezone.utc)
+        ended_at = datetime.now(UTC)
         if result.return_code not in (0, 99):
             detail = result.stderr.strip() or result.stdout.strip() or "no output"
-            raise RuntimeError(f"{self.title} failed (exit {result.return_code}): {detail}")
+            raise RuntimeError(
+                f"{self.title} failed (exit {result.return_code}): {detail}"
+            )
         if self._require_pass and result.return_code == 99:
             raise RuntimeError(f"{self.title} failed: k6 thresholds failed")
         return TaskOutcome(
             value=K6RunResult(
-                config.summary_output_path, started_at, ended_at, result.return_code == 0
+                config.summary_output_path,
+                started_at,
+                ended_at,
+                result.return_code == 0,
             )
         )
 
@@ -96,7 +131,9 @@ class K6Task(Task[K6RunResult]):
             config = {
                 "script_path": self._config.script_path,
                 "summary_output_path": self._config.summary_output_path,
-                "stages": tuple((stage.duration, stage.target) for stage in self._config.stages),
+                "stages": tuple(
+                    (stage.duration, stage.target) for stage in self._config.stages
+                ),
                 "env": self._config.env,
                 "vus": self._config.vus,
                 "duration": self._config.duration,

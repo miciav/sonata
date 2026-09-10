@@ -5,12 +5,15 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from sonata_tasks.errors import CommandTimeoutError, UnsupportedCommandOptionError
 from sonata_tasks.execution.local import LocalCommandTaskExecutor
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec
 
 
-def test_local_executor_applies_cwd_env_and_collects_both_streams(tmp_path: Path) -> None:
+def test_local_executor_applies_cwd_env_and_collects_both_streams(
+    tmp_path: Path,
+) -> None:
     spec = CommandTaskSpec(
         "x",
         "X",

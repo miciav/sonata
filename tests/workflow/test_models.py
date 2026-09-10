@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from sonata_engine.workflow.models import TaskDefinition, TaskRun, WorkflowRun, WorkflowState
+from sonata_engine.workflow.models import (
+    TaskDefinition,
+    TaskRun,
+    WorkflowRun,
+    WorkflowState,
+)
 
 
 def test_workflow_run_defaults() -> None:
@@ -25,4 +30,10 @@ def test_task_run_defaults() -> None:
 def test_workflow_state_values() -> None:
     from typing import get_args
 
-    assert set(get_args(WorkflowState)) == {"pending", "running", "success", "failed", "cancelled"}
+    assert set(get_args(WorkflowState)) == {
+        "pending",
+        "running",
+        "success",
+        "failed",
+        "cancelled",
+    }

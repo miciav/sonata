@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.gradle import GradleTask
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
 
 
 @dataclass
@@ -29,7 +29,11 @@ def test_it_runs_the_wrapper_and_never_leaves_a_daemon_behind() -> None:
     _ = task.run(TaskInputs.empty())
 
     assert task.title == "Run gradle :control-plane:bootJar"
-    assert executor.seen[0].argv == ("./gradlew", ":control-plane:bootJar", "--no-daemon")
+    assert executor.seen[0].argv == (
+        "./gradlew",
+        ":control-plane:bootJar",
+        "--no-daemon",
+    )
     assert executor.seen[0].execution_role == "stack"
 
 
@@ -89,4 +93,6 @@ def test_it_refuses_to_run_gradle_with_nothing_to_build() -> None:
 
 
 def test_it_is_a_command_task_rather_than_a_wrapper_around_one() -> None:
-    assert isinstance(GradleTask(":a:jar", executor=RecordingExecutor(), role="host"), CommandTask)
+    assert isinstance(
+        GradleTask(":a:jar", executor=RecordingExecutor(), role="host"), CommandTask
+    )

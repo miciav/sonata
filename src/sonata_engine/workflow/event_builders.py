@@ -1,3 +1,5 @@
+"""Constructors that fill a `WorkflowEvent`'s identity from a context."""
+
 from __future__ import annotations
 
 from sonata_engine.workflow.events import WorkflowContext, WorkflowEvent
@@ -20,7 +22,9 @@ def _resolve_context_fields(
         resolved_task_id = active.task_id
     else:
         resolved_task_id = None
-    resolved_parent = parent_task_id if parent_task_id is not None else active.parent_task_id
+    resolved_parent = (
+        parent_task_id if parent_task_id is not None else active.parent_task_id
+    )
     return (
         flow_id or active.flow_id,
         flow_run_id or active.flow_run_id,
@@ -42,6 +46,13 @@ def build_task_event(
     detail: str = "",
     context: WorkflowContext | None = None,
 ) -> WorkflowEvent:
+    """Build a task-lifecycle event of `kind`.
+
+    Identity fields left unset are inherited from `context`: `flow_id`,
+    `flow_run_id`, `task_id`, `parent_task_id` and `task_run_id`. `title`
+    falls back to the resolved `task_id` and then to `kind`, so the event
+    always carries a display name.
+    """
     resolved = _resolve_context_fields(
         flow_id=flow_id,
         flow_run_id=flow_run_id,
@@ -73,6 +84,11 @@ def build_log_event(
     stream: str = "stdout",
     context: WorkflowContext | None = None,
 ) -> WorkflowEvent:
+    """Build a `log.line` event carrying one `line` of output.
+
+    `stream` names the source stream (`"stdout"` or `"stderr"`). Identity
+    fields are inherited from `context` exactly as in `build_task_event`.
+    """
     resolved = _resolve_context_fields(
         flow_id=flow_id,
         flow_run_id=flow_run_id,

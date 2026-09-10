@@ -20,11 +20,13 @@ class _Noop(Task[None]):
 
 
 def _resource(title: str = "Acquire vm") -> Resource:
-    return Resource(title=title, acquire=lambda _inputs: None, release=lambda _inputs, _value: None)
+    return Resource(
+        title=title, acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+    )
 
 
 def _workflow_with_resource() -> tuple[Workflow, Resource]:
-    """build -> [acquire] -> list -> invoke -> [release]."""
+    """Build -> [acquire] -> list -> invoke -> [release]."""
     resource = _resource()
     workflow = Workflow(workflow_id="demo")
     workflow.add(_Noop("Build"))
@@ -34,7 +36,7 @@ def _workflow_with_resource() -> tuple[Workflow, Resource]:
 
 
 def test_no_selection_compiles_every_task() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     compiled = workflow.compile()
 
@@ -48,13 +50,13 @@ def test_no_selection_compiles_every_task() -> None:
 
 
 def test_empty_selection_is_the_same_as_no_selection() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     assert workflow.compile(select=Selection()).tasks == workflow.compile().tasks
 
 
 def test_only_keeps_one_consumer_and_its_resource_lifecycle() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     compiled = workflow.compile(select=Selection(only="invoke"))
 
@@ -99,7 +101,7 @@ def test_only_retains_transitive_resource_lifecycle() -> None:
 
 
 def test_only_on_a_task_without_resources_drops_the_lifecycle() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     compiled = workflow.compile(select=Selection(only="build"))
 
@@ -107,7 +109,7 @@ def test_only_on_a_task_without_resources_drops_the_lifecycle() -> None:
 
 
 def test_start_keeps_the_inclusive_tail() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     compiled = workflow.compile(select=Selection(start="list"))
 
@@ -120,7 +122,7 @@ def test_start_keeps_the_inclusive_tail() -> None:
 
 
 def test_until_keeps_the_inclusive_head() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     compiled = workflow.compile(select=Selection(until="list"))
 
@@ -133,7 +135,7 @@ def test_until_keeps_the_inclusive_head() -> None:
 
 
 def test_start_and_until_delimit_an_inclusive_range() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     compiled = workflow.compile(select=Selection(start="list", until="list"))
 
@@ -145,7 +147,7 @@ def test_start_and_until_delimit_an_inclusive_range() -> None:
 
 
 def test_unknown_slug_is_rejected_and_lists_what_is_available() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     with pytest.raises(SelectionError, match="no task matches slug 'deploy'") as error:
         workflow.compile(select=Selection(only="deploy"))
@@ -154,7 +156,7 @@ def test_unknown_slug_is_rejected_and_lists_what_is_available() -> None:
 
 
 def test_a_resource_slug_is_not_selectable() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     with pytest.raises(SelectionError, match="no task matches slug 'acquire-vm'"):
         workflow.compile(select=Selection(only="acquire-vm"))
@@ -174,11 +176,14 @@ def test_duplicate_titles_stay_legal_without_a_selection() -> None:
     workflow.add(_Noop("Build"))
     workflow.add(_Noop("Build"))
 
-    assert [task.task_id for task in workflow.compile().tasks] == ["001.build", "002.build"]
+    assert [task.task_id for task in workflow.compile().tasks] == [
+        "001.build",
+        "002.build",
+    ]
 
 
 def test_inverted_range_is_rejected() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     with pytest.raises(SelectionError, match="comes after"):
         workflow.compile(select=Selection(start="invoke", until="build"))
@@ -193,14 +198,17 @@ def test_a_title_with_no_slug_characters_is_a_compile_error() -> None:
 
 
 def test_compilation_stays_deterministic_under_selection() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
     selection = Selection(start="list")
 
-    assert workflow.compile(select=selection).tasks == workflow.compile(select=selection).tasks
+    assert (
+        workflow.compile(select=selection).tasks
+        == workflow.compile(select=selection).tasks
+    )
 
 
 def test_selection_does_not_mutate_the_workflow() -> None:
-    workflow, _resource_ = _workflow_with_resource()
+    workflow, _resource = _workflow_with_resource()
 
     workflow.compile(select=Selection(only="build"))
 

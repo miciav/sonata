@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+from sonata_engine.errors import NoUpstreamValueError
+
 from sonata_tasks.kubectl import (
     ClusterIpEndpointTask,
     KubectlTask,
 )
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
-from sonata_engine.errors import NoUpstreamValueError
 
 
 @dataclass
@@ -39,7 +39,9 @@ def test_commands_without_a_namespace_get_none() -> None:
     """`version --client` talks to no cluster, so a namespace would be wrong."""
     executor = RecordingExecutor()
 
-    _ = KubectlTask("version", "--client", executor=executor, role="stack").run(TaskInputs.empty())
+    _ = KubectlTask("version", "--client", executor=executor, role="stack").run(
+        TaskInputs.empty()
+    )
 
     assert executor.seen[0].argv == ("kubectl", "version", "--client")
 
@@ -52,7 +54,9 @@ def test_the_title_defaults_to_the_command_and_can_be_overridden() -> None:
         == "kubectl version --client"
     )
     assert (
-        KubectlTask("get", "pods", executor=executor, role="stack", title="List pods").title
+        KubectlTask(
+            "get", "pods", executor=executor, role="stack", title="List pods"
+        ).title
         == "List pods"
     )
 
@@ -77,8 +81,11 @@ def test_it_builds_the_url_from_the_address_the_previous_step_read() -> None:
 
 
 def test_a_service_with_no_address_fails_rather_than_yielding_a_broken_url() -> None:
-    """`http://:8080` would be accepted by curl and fail much later, somewhere
-    that says nothing about the Service."""
+    """Fail on a Service with no address rather than yielding a broken URL.
+
+    `http://:8080` would be accepted by curl and fail much later, somewhere
+    that says nothing about the Service.
+    """
     task = ClusterIpEndpointTask(service="control-plane", port=8080)
 
     with pytest.raises(RuntimeError, match="no ClusterIP"):
@@ -88,13 +95,18 @@ def test_a_service_with_no_address_fails_rather_than_yielding_a_broken_url() -> 
 def test_it_refuses_an_upstream_that_is_not_a_command_result() -> None:
     task = ClusterIpEndpointTask(service="control-plane", port=8080)
 
-    with pytest.raises(RuntimeError, match="expected the previous step's command result"):
+    with pytest.raises(
+        RuntimeError, match="expected the previous step's command result"
+    ):
         _ = task.run(_with_upstream("10.43.0.7"))
 
 
 def test_it_says_so_when_nothing_ran_before_it() -> None:
-    """Outside a composite there is no upstream at all — a different mistake
-    from an empty address, and the engine names it."""
+    """Reject a run with no upstream value and name that mistake.
+
+    Outside a composite there is no upstream at all — a different mistake
+    from an empty address, and the engine names it.
+    """
     task = ClusterIpEndpointTask(service="control-plane", port=8080)
 
     with pytest.raises(NoUpstreamValueError):

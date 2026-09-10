@@ -56,7 +56,9 @@ def test_azure_adapter_propagates_credentials_into_ensure_running() -> None:
 
 def test_azure_adapter_without_credentials_yields_bare_request() -> None:
     orch = _RecordingOrchestrator()
-    azure_vm_adapter(orch).ensure_running(VmConfig(name="x", cpus=1, memory="1G", disk="10G"))
+    azure_vm_adapter(orch).ensure_running(
+        VmConfig(name="x", cpus=1, memory="1G", disk="10G")
+    )
     assert orch.requests[0].azure_resource_group is None
 
 
@@ -69,7 +71,7 @@ def test_azure_provider_forwards_open_ports_to_sdk(monkeypatch) -> None:
         def ensure_running(self, name, **kwargs):
             captured.update(kwargs, name=name)
 
-    provider = AzureVmProvider(repo_root=Path("."))
+    provider = AzureVmProvider(repo_root=Path())
     monkeypatch.setattr(provider, "_client", lambda request: _FakeClient())
     # A live VM keeps the SDK fast path; recreation is covered in test_azure_provider.
     monkeypatch.setattr(provider, "_exists_in_azure", lambda request: True)

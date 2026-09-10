@@ -57,7 +57,10 @@ def _run(*steps: Task[object], title: str = "Deploy") -> object:
 
 
 def test_a_value_flows_through_the_pipeline() -> None:
-    assert _run(_Produce("Install", "rel-42"), _Forward(), _Decorate()) == "http://rel-42.svc"
+    assert (
+        _run(_Produce("Install", "rel-42"), _Forward(), _Decorate())
+        == "http://rel-42.svc"
+    )
 
 
 def test_none_flows_as_a_legitimate_value() -> None:
@@ -90,7 +93,9 @@ def test_a_nested_composite_receives_the_outer_upstream() -> None:
 
 def test_a_composite_compiles_to_one_unit_and_selection_keeps_it_whole() -> None:
     workflow = Workflow(workflow_id="w")
-    workflow.add(Steps(title="Deploy", steps=(_Produce("Install", "rel-42"), _Decorate())))
+    workflow.add(
+        Steps(title="Deploy", steps=(_Produce("Install", "rel-42"), _Decorate()))
+    )
 
     compiled = workflow.compile()
     assert [task.task_id for task in compiled.tasks] == ["001.deploy"]
@@ -119,7 +124,9 @@ def test_construction_rejects_an_empty_step_list() -> None:
 def test_construction_rejects_duplicate_normalized_slugs() -> None:
     """'Build A' and 'Build-A' normalize to the same journal identity."""
     with pytest.raises(ValueError, match="duplicate step slug 'build-a'"):
-        Steps(title="Deploy", steps=(_Produce("Build A", "1"), _Produce("Build-A", "2")))
+        Steps(
+            title="Deploy", steps=(_Produce("Build A", "1"), _Produce("Build-A", "2"))
+        )
 
 
 def test_construction_rejects_a_title_that_normalizes_to_nothing() -> None:
@@ -157,15 +164,21 @@ def test_steps_is_idempotent_so_a_failed_unit_can_be_re_entered() -> None:
 
 
 def test_running_steps_outside_a_workflow_raises() -> None:
-    """Calling `run()` directly bypasses the runner, so there is no step scope
-    to run steps in -- a user error, not an engine crash."""
+    """Assert that running steps outside a workflow raises.
+
+    Calling `run()` directly bypasses the runner, so there is no step scope
+    to run steps in -- a user error, not an engine crash.
+    """
     with pytest.raises(StepScopeUnavailableError, match="must be run by the workflow"):
         Steps(title="Deploy", steps=(_Forward(),)).run(TaskInputs.empty())
 
 
 def test_a_failing_step_still_releases_the_composites_resources() -> None:
-    """A composite that declares a resource and fails partway through must not
-    leak it: cleanup runs exactly as it would for a plain consumer task."""
+    """Assert a failing composite still releases its declared resource.
+
+    A composite that declares a resource and fails partway through must not
+    leak it: cleanup runs exactly as it would for a plain consumer task.
+    """
     released: list[str] = []
     resource = Resource[str](
         title="Acquire token",
@@ -234,8 +247,11 @@ def _seed_step(
     workflow_fingerprint: str,
     workflow_id: str = "w",
 ) -> None:
-    """Append one journal record for a step, following the shape `Journal`
-    reads (see `tests/test_resume.py::_seed` for the top-level-task twin)."""
+    """Append one journal record for a step.
+
+    The record follows the shape `Journal` reads (see
+    `tests/test_resume.py::_seed` for the top-level-task twin).
+    """
     record = {
         "schema_version": SCHEMA_VERSION,
         "workflow_id": workflow_id,
@@ -247,19 +263,23 @@ def _seed_step(
         "started_at": "2026-01-01T00:00:00Z",
         "finished_at": "2026-01-01T00:00:01Z",
         "evidence": [
-            {"kind": e.kind, "reference": e.reference, "digest": e.digest} for e in evidence
+            {"kind": e.kind, "reference": e.reference, "digest": e.digest}
+            for e in evidence
         ],
     }
-    with open(path, "a", encoding="utf-8") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
 
 
 def test_a_skipped_step_contributes_none_as_the_next_upstream(tmp_path: Path) -> None:
-    """The subtlest claim in the design: a skipped step must not hand its
+    """Assert a skipped step hands `None`, not its recorded value, downstream.
+
+    The subtlest claim in the design: a skipped step must not hand its
     (nonexistent) recorded value to the next step -- it hands `None`, the only
     value a skippable `ReusableTask` may ever legally produce. A regression that
     forwarded the *last recorded* upstream instead of reconstructing `None`
-    would pass every other test in this file."""
+    would pass every other test in this file.
+    """
 
     class _Build(ReusableTask):
         title = "Build"

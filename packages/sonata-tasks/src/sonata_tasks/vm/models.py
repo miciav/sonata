@@ -1,3 +1,5 @@
+"""Value objects describing the VM a task should run on and how to reach it."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,6 +10,8 @@ from pydantic import BaseModel, model_validator
 
 @dataclass(frozen=True, slots=True)
 class VmConfig:
+    """Sizing and naming requested for a VM to be created."""
+
     name: str
     cpus: int = 2
     memory: str = "2G"
@@ -16,6 +20,8 @@ class VmConfig:
 
 @dataclass(frozen=True, slots=True)
 class VmInfo:
+    """Connection details for a VM that exists and can be reached."""
+
     name: str
     host: str
     user: str
@@ -26,6 +32,12 @@ VmLifecycle = Literal["multipass", "external", "azure", "proxmox"]
 
 
 class VmRequest(BaseModel):
+    """Validated request for a VM, carrying per-lifecycle connection settings.
+
+    The ``lifecycle`` field selects which of the provider-specific fields below
+    are meaningful.
+    """
+
     lifecycle: VmLifecycle
     name: str | None = None
     host: str | None = None
@@ -49,12 +61,22 @@ class VmRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_lifecycle_requirements(self) -> Self:
+        """Reject requests whose lifecycle is missing the fields it needs.
+
+        Returns the request unchanged when valid, so it can be used as a model
+        validator.
+        """
         if self.lifecycle == "external" and not self.host:
             raise ValueError("host is required for external lifecycle")
         return self
 
 
 def vm_remote_home(request: VmRequest) -> str:
+    """Return the remote home directory to use for a request.
+
+    Falls back to the conventional ``/root`` or ``/home/<user>`` path when the
+    request does not name one explicitly.
+    """
     if request.home:
         return request.home
     return "/root" if request.user == "root" else f"/home/{request.user}"

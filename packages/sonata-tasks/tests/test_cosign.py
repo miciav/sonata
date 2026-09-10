@@ -4,11 +4,11 @@ import re
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.cosign import COSIGN_IMAGE, CosignTask
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
 
 
 def test_cosign_image_is_digest_pinned() -> None:

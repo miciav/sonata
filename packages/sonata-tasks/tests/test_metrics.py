@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import TaskInputs
+
 from sonata_tasks.metrics import PrometheusMinimumCheckTask, PrometheusScrapeCheckTask
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import TaskInputs
 
 
 @dataclass
@@ -19,7 +19,9 @@ class Executor:
 
     def run(self, task: CommandTaskSpec, *, dry_run: bool = False) -> TaskResult:
         self.seen.append(task)
-        return TaskResult(task_id="", status="passed", return_code=0, stdout=self.stdout)
+        return TaskResult(
+            task_id="", status="passed", return_code=0, stdout=self.stdout
+        )
 
 
 def test_metric_check_sums_matching_samples_and_honors_labels() -> None:
@@ -58,7 +60,10 @@ def test_metric_check_accepts_the_first_available_alternative() -> None:
         minimums=(),
         any_minimums=(
             (
-                ("function_init_duration_ms_seconds_count", "function_init_duration_ms_count"),
+                (
+                    "function_init_duration_ms_seconds_count",
+                    "function_init_duration_ms_count",
+                ),
                 {"function": "word-stats"},
                 1,
             ),

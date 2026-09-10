@@ -1,3 +1,5 @@
+"""Command tasks for the docker subcommands used by the catalogue."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -20,6 +22,12 @@ class DockerTask(CommandTask):
         verify: Callable[[TaskResult], None] | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Build ``docker <args>`` as the command to run.
+
+        ``title`` defaults to one echoing the arguments, and ``verify`` and
+        ``semantic_key`` are forwarded to
+        :class:`~sonata_tasks.command.CommandTask`.
+        """
         super().__init__(
             title=title or f"docker {' '.join(args)}",
             argv=("docker", *args),
@@ -32,6 +40,8 @@ class DockerTask(CommandTask):
 
 
 class DockerBuildTask(CommandTask):
+    """Build an image from a Dockerfile and tag it."""
+
     def __init__(
         self,
         *,
@@ -43,6 +53,10 @@ class DockerBuildTask(CommandTask):
         options: CommandOptions | None = None,
         title: str | None = None,
     ) -> None:
+        """Configure ``docker build`` for ``context``, tagged ``image``.
+
+        ``title`` defaults to one naming the image.
+        """
         super().__init__(
             title=title or f"Build image {image}",
             argv=("docker", "build", "-f", dockerfile, "-t", image, context),
@@ -53,6 +67,8 @@ class DockerBuildTask(CommandTask):
 
 
 class DockerPushTask(CommandTask):
+    """Push a tagged image to its registry."""
+
     def __init__(
         self,
         *,
@@ -62,6 +78,10 @@ class DockerPushTask(CommandTask):
         options: CommandOptions | None = None,
         title: str | None = None,
     ) -> None:
+        """Configure ``docker push`` for ``image``.
+
+        ``title`` defaults to one naming the image.
+        """
         super().__init__(
             title=title or f"Push image {image}",
             argv=("docker", "push", image),
@@ -72,6 +92,8 @@ class DockerPushTask(CommandTask):
 
 
 class DockerInspectTask(CommandTask):
+    """Inspect a container and format the result with a Go template."""
+
     def __init__(
         self,
         *,
@@ -84,6 +106,11 @@ class DockerInspectTask(CommandTask):
         verify: Callable[[TaskResult], None] | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Configure ``docker inspect`` for ``container``.
+
+        ``fmt`` is passed as ``--format``; it defaults to the container's host
+        configuration as JSON. ``title`` defaults to one naming the container.
+        """
         super().__init__(
             title=title or f"Inspect {container}",
             argv=("docker", "inspect", f"--format={fmt}", container),

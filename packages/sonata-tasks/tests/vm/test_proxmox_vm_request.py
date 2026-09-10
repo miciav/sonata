@@ -6,7 +6,9 @@ from sonata_tasks.vm.models import VmRequest
 
 
 def test_proxmox_lifecycle_accepted() -> None:
-    req = VmRequest(lifecycle="proxmox", proxmox_host="192.168.1.100", proxmox_node="pve")
+    req = VmRequest(
+        lifecycle="proxmox", proxmox_host="192.168.1.100", proxmox_node="pve"
+    )
     assert req.lifecycle == "proxmox"
 
 

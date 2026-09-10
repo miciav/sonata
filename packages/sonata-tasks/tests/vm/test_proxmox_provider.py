@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from sonata_tasks.vm.models import VmRequest
 from sonata_tasks.vm.providers.proxmox import ProxmoxVmProvider
 
@@ -16,17 +17,17 @@ def _make_provider() -> ProxmoxVmProvider:
 
 
 def _make_request(**kwargs: Any) -> VmRequest:
-    defaults: dict[str, Any] = dict(
-        lifecycle="proxmox",
-        name="test-vm",
-        user="ubuntu",
-        proxmox_host="pve.example.com",
-        proxmox_node="pve",
-        proxmox_user="root@pam",
-        proxmox_password="secret",
-        proxmox_template_id=100,
-        proxmox_ssh_key_path="/home/user/.ssh/id_ed25519",
-    )
+    defaults: dict[str, Any] = {
+        "lifecycle": "proxmox",
+        "name": "test-vm",
+        "user": "ubuntu",
+        "proxmox_host": "pve.example.com",
+        "proxmox_node": "pve",
+        "proxmox_user": "root@pam",
+        "proxmox_password": "secret",
+        "proxmox_template_id": 100,
+        "proxmox_ssh_key_path": "/home/user/.ssh/id_ed25519",
+    }
     defaults.update(kwargs)
     return VmRequest(**defaults)
 
@@ -131,7 +132,9 @@ def test_ssh_key_fallback(mock_find, mock_client_cls) -> None:
 def test_ssh_endpoint_returns_published_endpoint(mock_client_cls, monkeypatch) -> None:
     provider = _make_provider()
     req = _make_request()
-    monkeypatch.setattr(provider, "_ssh_endpoint", lambda request: ("149.132.176.73", 20001))
+    monkeypatch.setattr(
+        provider, "_ssh_endpoint", lambda request: ("149.132.176.73", 20001)
+    )
 
     assert provider.ssh_endpoint(req) == ("149.132.176.73", 20001)
 
@@ -236,7 +239,7 @@ def test_connection_host_returns_guest_ip(mock_client_cls) -> None:
 
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
 def test_guest_host_returns_guest_ip(mock_client_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     provider = _make_provider()
     req = _make_request()
@@ -266,10 +269,20 @@ def test_teardown_removes_nat_rules_for_vm(mock_client_cls, mock_routing_cls) ->
     mock_client_cls.return_value = client_mock
     mgr_mock = MagicMock()
     matching_rule = PortMapping(
-        vm_id=100, vm_name="test-vm", vm_ip="10.0.0.10", vm_port=22, service="SSH", host_port=20000
+        vm_id=100,
+        vm_name="test-vm",
+        vm_ip="10.0.0.10",
+        vm_port=22,
+        service="SSH",
+        host_port=20000,
     )
     other_rule = PortMapping(
-        vm_id=200, vm_name="other-vm", vm_ip="10.0.0.20", vm_port=22, service="SSH", host_port=20001
+        vm_id=200,
+        vm_name="other-vm",
+        vm_ip="10.0.0.20",
+        vm_port=22,
+        service="SSH",
+        host_port=20001,
     )
     mgr_mock.list_rules.return_value = [matching_rule, other_rule]
     mock_routing_cls.from_key.return_value = mgr_mock
@@ -282,7 +295,9 @@ def test_teardown_removes_nat_rules_for_vm(mock_client_cls, mock_routing_cls) ->
 
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxRoutingManager")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
-def test_teardown_stops_running_vm_before_delete(mock_client_cls, mock_routing_cls) -> None:
+def test_teardown_stops_running_vm_before_delete(
+    mock_client_cls, mock_routing_cls
+) -> None:
     client_mock, vm_mock = _make_proxmox_client_mock()
     vm_mock.info.return_value.state.value = "running"
     mock_client_cls.return_value = client_mock
@@ -299,8 +314,10 @@ def test_teardown_stops_running_vm_before_delete(mock_client_cls, mock_routing_c
 
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxRoutingManager")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
-def test_teardown_nat_failure_does_not_prevent_success(mock_client_cls, mock_routing_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+def test_teardown_nat_failure_does_not_prevent_success(
+    mock_client_cls, mock_routing_cls
+) -> None:
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     mock_routing_cls.from_key.side_effect = RuntimeError("SSH failed")
     provider = _make_provider()
@@ -311,7 +328,9 @@ def test_teardown_nat_failure_does_not_prevent_success(mock_client_cls, mock_rou
 
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxRoutingManager")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
-def test_teardown_removes_nat_rules_when_delete_fails(mock_client_cls, mock_routing_cls) -> None:
+def test_teardown_removes_nat_rules_when_delete_fails(
+    mock_client_cls, mock_routing_cls
+) -> None:
     from proxmox_sdk.routing import PortMapping
 
     client_mock, vm_mock = _make_proxmox_client_mock()
@@ -389,7 +408,9 @@ def test_ensure_running(
     public_key = tmp_path / "id_ed25519.pub"
     private_key.write_text("private-key-placeholder", encoding="utf-8")
     public_key.write_text("ssh-ed25519 AAAA test@example\n", encoding="utf-8")
-    req = _make_request(cpus=2, memory="4G", disk="20G", proxmox_ssh_key_path=str(private_key))
+    req = _make_request(
+        cpus=2, memory="4G", disk="20G", proxmox_ssh_key_path=str(private_key)
+    )
     result = provider.ensure_running(req)
     client_mock.ensure_running.assert_called_once_with(
         "test-vm",
@@ -398,7 +419,9 @@ def test_ensure_running(
         cores=2,
         memory_mb=4096,
         disk_gb=20,
-        cloud_init_config=client_mock.ensure_running.call_args.kwargs["cloud_init_config"],
+        cloud_init_config=client_mock.ensure_running.call_args.kwargs[
+            "cloud_init_config"
+        ],
     )
     cloud_init = client_mock.ensure_running.call_args.kwargs["cloud_init_config"]
     assert cloud_init.username == "ubuntu"
@@ -444,7 +467,9 @@ def test_ensure_running_waits_ready_and_publishes_ssh_nat(
     public_key = tmp_path / "id_ed25519.pub"
     private_key.write_text("private-key-placeholder", encoding="utf-8")
     public_key.write_text("ssh-ed25519 AAAA test@example\n", encoding="utf-8")
-    req = _make_request(cpus=2, memory="4G", disk="20G", proxmox_ssh_key_path=str(private_key))
+    req = _make_request(
+        cpus=2, memory="4G", disk="20G", proxmox_ssh_key_path=str(private_key)
+    )
 
     result = provider.ensure_running(req)
 
@@ -570,7 +595,7 @@ def test_ensure_running_passes_configured_ssh_public_key_to_cloud_init(
 @patch("sonata_tasks.vm.providers.proxmox.subprocess.run")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
 def test_exec_argv(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     _mock_ssh_nat_rule(mock_routing_cls, host_port=20022)
     proc = MagicMock()
@@ -592,7 +617,9 @@ def test_exec_argv(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
     # known_hosts so recreated VMs never collide with stale cached keys.
     assert "UserKnownHostsFile=/dev/null" in called_cmd
     assert "BatchMode=yes" in called_cmd
-    assert called_cmd[-3:-1] == ["-p", "20022"] or ("-p" in called_cmd and "20022" in called_cmd)
+    assert called_cmd[-3:-1] == ["-p", "20022"] or (
+        "-p" in called_cmd and "20022" in called_cmd
+    )
     assert "ubuntu@pve.example.com" in called_cmd
     assert "echo hello" in called_cmd[-1]
 
@@ -600,8 +627,10 @@ def test_exec_argv(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxRoutingManager")
 @patch("sonata_tasks.vm.providers.proxmox.subprocess.run")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
-def test_exec_argv_with_cwd_and_env(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+def test_exec_argv_with_cwd_and_env(
+    mock_client_cls, mock_subproc, mock_routing_cls
+) -> None:
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     _mock_ssh_nat_rule(mock_routing_cls)
     proc = MagicMock()
@@ -612,7 +641,9 @@ def test_exec_argv_with_cwd_and_env(mock_client_cls, mock_subproc, mock_routing_
     provider = _make_provider()
     req = _make_request()
 
-    result = provider.exec_argv(req, ["ls"], remote_dir="/home/ubuntu", env={"FOO": "bar"})
+    result = provider.exec_argv(
+        req, ["ls"], remote_dir="/home/ubuntu", env={"FOO": "bar"}
+    )
 
     assert result.return_code == 0
     remote_cmd = mock_subproc.call_args[0][0][-1]
@@ -637,7 +668,9 @@ def test_exec_argv_failure_includes_proxmox_nat_diagnostic(
     proc = MagicMock()
     proc.returncode = 255
     proc.stdout = ""
-    proc.stderr = "ssh: connect to host pve.example.com port 20022: Connection refused\n"
+    proc.stderr = (
+        "ssh: connect to host pve.example.com port 20022: Connection refused\n"
+    )
     mock_subproc.return_value = proc
     provider = _make_provider()
     req = _make_request(proxmox_host="pve.example.com")
@@ -655,7 +688,7 @@ def test_exec_argv_failure_includes_proxmox_nat_diagnostic(
 @patch("sonata_tasks.vm.providers.proxmox.subprocess.run")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
 def test_transfer_to(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     _mock_ssh_nat_rule(mock_routing_cls, host_port=20022)
     proc = MagicMock()
@@ -666,7 +699,9 @@ def test_transfer_to(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
     provider = _make_provider()
     req = _make_request(proxmox_host="pve.example.com")
 
-    result = provider.transfer_to(req, source=Path("/local/file"), destination="/remote/file")
+    result = provider.transfer_to(
+        req, source=Path("/local/file"), destination="/remote/file"
+    )
 
     assert result.return_code == 0
     cmd = result.command
@@ -682,7 +717,7 @@ def test_transfer_to(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
 @patch("sonata_tasks.vm.providers.proxmox.subprocess.run")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
 def test_transfer_from(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     _mock_ssh_nat_rule(mock_routing_cls, host_port=20022)
     proc = MagicMock()
@@ -693,7 +728,9 @@ def test_transfer_from(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
     provider = _make_provider()
     req = _make_request(proxmox_host="pve.example.com")
 
-    result = provider.transfer_from(req, source="/remote/file", destination=Path("/local/file"))
+    result = provider.transfer_from(
+        req, source="/remote/file", destination=Path("/local/file")
+    )
 
     assert result.return_code == 0
     cmd = result.command
@@ -708,8 +745,10 @@ def test_transfer_from(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxRoutingManager")
 @patch("sonata_tasks.vm.providers.proxmox.subprocess.run")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
-def test_transfer_from_no_ssh_key(mock_client_cls, mock_subproc, mock_routing_cls) -> None:
-    client_mock, vm_mock = _make_proxmox_client_mock()
+def test_transfer_from_no_ssh_key(
+    mock_client_cls, mock_subproc, mock_routing_cls
+) -> None:
+    client_mock, _vm_mock = _make_proxmox_client_mock()
     mock_client_cls.return_value = client_mock
     _mock_ssh_nat_rule(mock_routing_cls)
     proc = MagicMock()
@@ -719,15 +758,21 @@ def test_transfer_from_no_ssh_key(mock_client_cls, mock_subproc, mock_routing_cl
     mock_subproc.return_value = proc
     provider = _make_provider()
     req = _make_request(proxmox_ssh_key_path=None)
-    with patch("sonata_tasks.vm.providers.proxmox.find_ssh_private_key_path", return_value=None):
-        result = provider.transfer_from(req, source="/remote/file", destination=Path("/local"))
+    with patch(
+        "sonata_tasks.vm.providers.proxmox.find_ssh_private_key_path", return_value=None
+    ):
+        result = provider.transfer_from(
+            req, source="/remote/file", destination=Path("/local")
+        )
     assert result.return_code == 0
     assert "-i" not in result.command
 
 
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxRoutingManager")
 @patch("sonata_tasks.vm.providers.proxmox.ProxmoxClient")
-def test_publish_port_returns_runner_facing_endpoint(mock_client_cls, mock_routing_cls) -> None:
+def test_publish_port_returns_runner_facing_endpoint(
+    mock_client_cls, mock_routing_cls
+) -> None:
     from proxmox_sdk.routing import PortMapping
 
     client_mock, vm_mock = _make_proxmox_client_mock()

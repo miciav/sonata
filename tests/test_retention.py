@@ -1,4 +1,5 @@
 """Releasing what a kept run left behind, from a later process."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -38,7 +39,9 @@ def _resource(title: str, value: object, calls: list[str], **kwargs) -> Resource
     )
 
 
-def _kept_run(tmp_path: Path, resources: tuple[Resource, ...], calls: list[str]) -> Path:
+def _kept_run(
+    tmp_path: Path, resources: tuple[Resource, ...], calls: list[str]
+) -> Path:
     workflow = Workflow(workflow_id="wf", keep=True)
     workflow.add(_Use(), requires=resources)
     path = tmp_path / "journal.jsonl"
@@ -59,8 +62,11 @@ def test_releases_retained_resources_in_reverse_order(tmp_path: Path) -> None:
 
 
 def test_revive_rebuilds_the_value_the_release_expects(tmp_path: Path) -> None:
-    """The journal can only hold JSON, but a release written against a dataclass
-    would break on a dict. The resource says how to read its own record back."""
+    """Rebuild the value the release callback expects from its own record.
+
+    The journal can only hold JSON, but a release written against a dataclass
+    would break on a dict. The resource says how to read its own record back.
+    """
     seen: list[object] = []
     vm = Resource(
         title="Acquire vm",
@@ -90,10 +96,15 @@ def test_a_second_teardown_is_a_no_op(tmp_path: Path) -> None:
     assert calls == ["Acquire stack:s"]
 
 
-def test_a_retained_resource_the_caller_cannot_build_is_reported(tmp_path: Path) -> None:
-    """Silently skipping it would report a clean teardown while the thing keeps
+def test_a_retained_resource_the_caller_cannot_build_is_reported(
+    tmp_path: Path,
+) -> None:
+    """Report a retained resource the caller did not supply.
+
+    Silently skipping it would report a clean teardown while the thing keeps
     running. Refusing outright would be worse: the resources the caller *did*
-    supply are usually the expensive ones, and they would stay up too."""
+    supply are usually the expensive ones, and they would stay up too.
+    """
     calls: list[str] = []
     stack = _resource("Acquire stack", "s", calls)
     orphan = _resource("Acquire orphan", "o", calls)

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from sonata_tasks.core.fingerprint import fingerprint_digest, semantic_key
 
 
@@ -55,14 +56,16 @@ def test_semantic_key_is_opaque() -> None:
 
 
 @pytest.mark.parametrize(
-    "payload, error",
+    ("payload", "error"),
     [
         ({"value": float("inf")}, ValueError),
         ({1: "not-a-string-key"}, TypeError),
         ({"value": object()}, TypeError),
     ],
 )
-def test_fingerprint_rejects_noncanonical_values(payload: dict, error: type[Exception]) -> None:
+def test_fingerprint_rejects_noncanonical_values(
+    payload: dict, error: type[Exception]
+) -> None:
     with pytest.raises(error):
         fingerprint_digest(payload)
 

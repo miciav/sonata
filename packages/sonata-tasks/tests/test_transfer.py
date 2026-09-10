@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
-from sonata_tasks.transfer import FileTransferTask
-
 from sonata_engine import TaskInputs
+
+from sonata_tasks.transfer import FileTransferTask
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,9 @@ class _FakeTransferProvider:
     def exec_argv(self, request: object, argv: tuple[str, ...]) -> _Result:
         raise AssertionError(f"unexpected command: {argv}")
 
-    def transfer_to(self, request: object, *, source: Path, destination: str) -> _Result:
+    def transfer_to(
+        self, request: object, *, source: Path, destination: str
+    ) -> _Result:
         self.calls.append((source, destination))
         return _Result()
 
@@ -57,7 +59,9 @@ def test_file_transfer_raises_on_nonzero_exit():
 
     class _FailingProvider(_FakeTransferProvider):
         @override
-        def transfer_to(self, request: object, *, source: Path, destination: str) -> _Result:
+        def transfer_to(
+            self, request: object, *, source: Path, destination: str
+        ) -> _Result:
             return _Result(return_code=1, stderr="disk full")
 
     task = FileTransferTask(
@@ -66,5 +70,5 @@ def test_file_transfer_raises_on_nonzero_exit():
         provider=_FailingProvider(),
         request=object(),
     )
-    with pytest.raises(RuntimeError, match="Transfer bake.json failed"):
+    with pytest.raises(RuntimeError, match=r"Transfer bake.json failed"):
         task.run(TaskInputs.empty())

@@ -43,7 +43,9 @@ def main() -> None:
     workflow.add(
         K6Task(
             K6Config(
-                Path("load.js"), Path("summary.json"), env={"TARGET_URL": "https://example.test"}
+                Path("load.js"),
+                Path("summary.json"),
+                env={"TARGET_URL": "https://example.test"},
             ),
             executor=routed,
             role="builder",

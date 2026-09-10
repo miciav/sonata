@@ -83,6 +83,7 @@ def start_builder(inputs: TaskInputs) -> Builder:
 def stop_builder(inputs: TaskInputs, builder: Builder) -> None:
     builder.stop()
 
+
 builder: Resource[Builder] = Resource(
     title="Acquire builder",
     acquire=start_builder,
@@ -132,6 +133,7 @@ you.
 
 ```python
 from sonata_engine import Task, TaskInputs, TaskOutcome, subtask
+
 
 class PublishImages(Task[str]):
     title = "Publish images"

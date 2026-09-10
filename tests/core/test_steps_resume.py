@@ -72,8 +72,11 @@ def _workflow(ran: list[str], attempts: list[int]) -> Workflow:
 def test_resume_skips_finished_reusable_steps_and_retries_the_failed_one(
     tmp_path,
 ) -> None:
-    """The point of the journal work: the last build fails, you resume, the
-    earlier builds do not run again."""
+    """Assert resume skips finished reusable steps and retries the failed one.
+
+    The point of the journal work: the last build fails, you resume, the
+    earlier builds do not run again.
+    """
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     ran: list[str] = []
     attempts = [0]

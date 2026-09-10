@@ -1,8 +1,11 @@
+"""Turn already-resolved command specs into a runnable step sequence."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 from sonata_engine import Steps
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.core.fingerprint import fingerprint_digest
 from sonata_tasks.execution.models import CommandTaskSpec
@@ -12,6 +15,11 @@ from sonata_tasks.execution.ports import CommandTaskExecutor
 def command_specs_composite(
     commands: Sequence[CommandTaskSpec], executor: CommandTaskExecutor, *, title: str
 ) -> Steps:
+    """Wrap each spec in a :class:`CommandTask` and collect them as ``Steps``.
+
+    ``title`` labels the composite; a spec without a summary is titled by its
+    position in ``commands``.
+    """
     return Steps(
         title=title,
         steps=tuple(

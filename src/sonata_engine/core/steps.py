@@ -1,3 +1,5 @@
+"""Composites assembled from smaller tasks rather than written as one body."""
+
 from __future__ import annotations
 
 from typing import Any, override
@@ -31,6 +33,13 @@ class Steps(Task[Any]):
     idempotent = True
 
     def __init__(self, *, title: str, steps: tuple[Task[Any], ...]) -> None:
+        """Assemble `steps` into one composite named `title`.
+
+        Each step is slugged from its own title to give it a stable name inside
+        the composite. An empty `steps` sequence, a title that slugs to nothing,
+        or two steps that slug the same are all rejected here, since the slug is
+        what the journal keys the step's records on.
+        """
         if not steps:
             raise ValueError("Steps requires at least one step")
 
@@ -55,7 +64,7 @@ class Steps(Task[Any]):
                 f"{type(step).__module__}.{type(step).__qualname__}",
                 step._fingerprint_payload(),
             )
-            for slug, step in zip(self._slugs, self._steps)
+            for slug, step in zip(self._slugs, self._steps, strict=True)
         )
 
     @override
@@ -68,10 +77,12 @@ class Steps(Task[Any]):
             )
 
         upstream: Any = inputs._upstream
-        for slug, step in zip(self._slugs, self._steps):
+        for slug, step in zip(self._slugs, self._steps, strict=True):
             execution = scope.run_step(step, slug, upstream)
             # A step that ran contributes its value, including a legitimate
             # None; a skipped step contributes None, the only value a skippable
             # ReusableTask may return.
-            upstream = execution.outcome.value if execution.outcome is not None else None
+            upstream = (
+                execution.outcome.value if execution.outcome is not None else None
+            )
         return TaskOutcome(value=upstream)

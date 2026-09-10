@@ -1,10 +1,17 @@
+"""Multipass VM provider: lifecycle, remote execution, and file transfer."""
+
 from __future__ import annotations
 
 import shlex
 from pathlib import Path
 from typing import cast
 
-from multipass import MultipassClient, MultipassCommandError, VmNotFoundError, find_ssh_public_key
+from multipass import (
+    MultipassClient,
+    MultipassCommandError,
+    VmNotFoundError,
+    find_ssh_public_key,
+)
 from shellcraft.backend import ShellBackend, ShellExecutionResult, SubprocessShell
 
 from sonata_tasks.vm.models import VmRequest, vm_remote_home
@@ -35,6 +42,12 @@ def resolve_connection_host(
     *,
     dry_run: bool = False,
 ) -> str:
+    """Resolve the host a caller should connect to for this request.
+
+    Returns the request's explicit host for the external lifecycle, a
+    placeholder during a dry run, and otherwise the VM's first IPv4 address.
+    Raises RuntimeError when the VM is unknown or has no IPv4 address.
+    """
     if request.lifecycle == "external":
         if not request.host:
             raise RuntimeError("external VM lifecycle requires a host")
@@ -43,11 +56,15 @@ def resolve_connection_host(
         return f"<multipass-ip:{_vm_name_default(request)}>"
     try:
         info = client.get_vm(_vm_name_default(request)).info()
-    except VmNotFoundError:
-        raise RuntimeError(f"Unable to resolve Multipass VM '{_vm_name_default(request)}'")
+    except VmNotFoundError as error:
+        raise RuntimeError(
+            f"Unable to resolve Multipass VM '{_vm_name_default(request)}'"
+        ) from error
     if info.ipv4:
         return info.ipv4[0]
-    raise RuntimeError(f"Multipass VM '{_vm_name_default(request)}' has no IPv4 address")
+    raise RuntimeError(
+        f"Multipass VM '{_vm_name_default(request)}' has no IPv4 address"
+    )
 
 
 class MultipassVmProvider:
@@ -63,10 +80,16 @@ class MultipassVmProvider:
         shell: ShellBackend | None = None,
         multipass_client: MultipassClient | None = None,
     ) -> None:
+        """Store the workspace root and the shell and Multipass clients.
+
+        ``shell`` and ``multipass_client`` default to a SubprocessShell and a
+        fresh MultipassClient. SSH credentials are discovered lazily on first
+        use.
+        """
         self.workspace_root = Path(workspace_root)
         self.shell = shell or SubprocessShell()
         self._client = multipass_client or MultipassClient()
-        self._ssh_public_key: str | None | object = _SSH_CREDENTIALS_UNRESOLVED
+        self._ssh_public_key: str | object | None = _SSH_CREDENTIALS_UNRESOLVED
         self._private_key_path: Path | None = None
 
     def _ssh_credentials(self) -> tuple[str | None, Path | None]:
@@ -82,7 +105,9 @@ class MultipassVmProvider:
     def _remote_home(self, request: VmRequest) -> str:
         return vm_remote_home(request)
 
-    def _shell_run(self, command: list[str], *, dry_run: bool = False) -> ShellExecutionResult:
+    def _shell_run(
+        self, command: list[str], *, dry_run: bool = False
+    ) -> ShellExecutionResult:
         # cwd here is the *local* working directory of the ssh/scp process, which
         # is not where the caller stands. Any local path in `command` must
         # therefore already be absolute — see _local_path — or it silently
@@ -91,7 +116,12 @@ class MultipassVmProvider:
 
     def _ssh_options(self) -> list[str]:
         _, private_key = self._ssh_credentials()
-        options = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
+        options = [
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+        ]
         if private_key is not None:
             options.extend(("-i", str(private_key)))
         return options
@@ -115,18 +145,32 @@ class MultipassVmProvider:
         return " && ".join(parts)
 
     def vm_name(self, request: VmRequest) -> str:
+        """Return the VM name, raising ValueError when the request has none."""
         return self._vm_name(request)
 
     def remote_home(self, request: VmRequest) -> str:
+        """Return the remote user's home directory for the request."""
         return self._remote_home(request)
 
-    def resolve_multipass_ipv4(self, request: VmRequest, *, dry_run: bool = False) -> str:
+    def resolve_multipass_ipv4(
+        self, request: VmRequest, *, dry_run: bool = False
+    ) -> str:
+        """Return the VM's IPv4 address, or a placeholder during a dry run."""
         return resolve_connection_host(request, self._client, dry_run=dry_run)
 
     def connection_host(self, request: VmRequest, *, dry_run: bool = False) -> str:
+        """Return the host to use for SSH connections to the VM."""
         return resolve_connection_host(request, self._client, dry_run=dry_run)
 
-    def ensure_running(self, request: VmRequest, *, dry_run: bool = False) -> ShellExecutionResult:
+    def ensure_running(
+        self, request: VmRequest, *, dry_run: bool = False
+    ) -> ShellExecutionResult:
+        """Start or create the VM and return the command that was run.
+
+        The external lifecycle only probes SSH. A dry run returns the
+        multipass launch command without contacting Multipass, and otherwise
+        the VM is created (or left running) through the SDK.
+        """
         if request.lifecycle == "external":
             return self._shell_run(
                 ["ssh", f"{request.user}@{request.host}", "true"], dry_run=dry_run
@@ -147,7 +191,9 @@ class MultipassVmProvider:
         if dry_run:
             return successful_result(launch_cmd)
         public_key, _ = self._ssh_credentials()
-        cloud_init_config = {"ssh_authorized_keys": [public_key]} if public_key else None
+        cloud_init_config = (
+            {"ssh_authorized_keys": [public_key]} if public_key else None
+        )
         self._client.ensure_running(
             name,
             cpus=request.cpus,
@@ -157,7 +203,15 @@ class MultipassVmProvider:
         )
         return successful_result(launch_cmd)
 
-    def teardown(self, request: VmRequest, *, dry_run: bool = False) -> ShellExecutionResult:
+    def teardown(
+        self, request: VmRequest, *, dry_run: bool = False
+    ) -> ShellExecutionResult:
+        """Delete the VM, leaving external-lifecycle VMs untouched.
+
+        A dry run returns the multipass delete command without contacting
+        Multipass. SDK errors are returned as a failed result rather than
+        raised, and a VM that is already gone counts as success.
+        """
         if request.lifecycle == "external":
             return self._shell_run(
                 ["echo", "Skipping teardown for external VM lifecycle"], dry_run=dry_run
@@ -172,7 +226,15 @@ class MultipassVmProvider:
                 return _sdk_error(e)
         return successful_result(["multipass", "delete", name])
 
-    def inspect(self, request: VmRequest, *, dry_run: bool = False) -> ShellExecutionResult:
+    def inspect(
+        self, request: VmRequest, *, dry_run: bool = False
+    ) -> ShellExecutionResult:
+        """Return a ``multipass info`` result describing the VM's state.
+
+        The stdout carries the VM's name, state, and IPv4 addresses; external
+        VMs report their hostname over SSH instead. SDK errors come back as a
+        failed result.
+        """
         if request.lifecycle == "external":
             return self._shell_run(
                 ["ssh", f"{request.user}@{request.host}", "hostname"], dry_run=dry_run
@@ -200,6 +262,12 @@ class MultipassVmProvider:
         remote_dir: str | None = None,
         dry_run: bool = False,
     ) -> ShellExecutionResult:
+        """Run ``argv`` on the VM and return the command's result.
+
+        ``env`` and ``remote_dir`` are folded into a single shell command, so
+        their values are quoted and the remote directory, if any, is entered
+        before the command runs.
+        """
         command = self._build_exec_script(argv, env=env, remote_dir=remote_dir)
         return self.remote_exec(request, command=command, dry_run=dry_run)
 
@@ -210,6 +278,7 @@ class MultipassVmProvider:
         command: str,
         dry_run: bool = False,
     ) -> ShellExecutionResult:
+        """Run a shell command string on the VM over SSH and return its result."""
         return self._shell_run(
             [
                 "ssh",
@@ -222,7 +291,7 @@ class MultipassVmProvider:
 
     @staticmethod
     def _local_path(path: Path) -> str:
-        """A local path the scp process will read the same way its caller meant.
+        """Return an absolute local path for scp to read.
 
         scp runs from the workspace, not from wherever the caller stands, so a
         relative path would quietly mean a different file. It cost a silent bug:
@@ -240,6 +309,11 @@ class MultipassVmProvider:
         destination: str,
         dry_run: bool = False,
     ) -> ShellExecutionResult:
+        """Copy a local file to the VM and return the scp result.
+
+        The local source is made absolute so scp reads the file the caller
+        meant regardless of the workspace scp runs from.
+        """
         return self._shell_run(
             [
                 "scp",
@@ -258,6 +332,11 @@ class MultipassVmProvider:
         destination: Path,
         dry_run: bool = False,
     ) -> ShellExecutionResult:
+        """Copy a remote file from the VM to a local destination.
+
+        The local destination is made absolute so scp writes where the caller
+        meant, and the scp result is returned.
+        """
         return self._shell_run(
             [
                 "scp",

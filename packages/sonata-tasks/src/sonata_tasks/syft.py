@@ -1,3 +1,5 @@
+"""Generate a software bill of materials for an image with syft."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,10 +9,15 @@ from sonata_tasks.command import CommandTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.execution.ports import CommandTaskExecutor
 
-SYFT_IMAGE = "anchore/syft@sha256:f94e5d9fce1f2278491a8e3a63bd5f6ddb81fdfdbb8bf7a1637565c1d5344357"
+SYFT_IMAGE = (
+    "anchore/syft@sha256:"
+    "f94e5d9fce1f2278491a8e3a63bd5f6ddb81fdfdbb8bf7a1637565c1d5344357"
+)
 
 
 class SyftTask(CommandTask):
+    """Produce an SBOM for an image, in a pinned syft container."""
+
     def __init__(
         self,
         *,
@@ -26,6 +33,13 @@ class SyftTask(CommandTask):
         verify: Callable[[TaskResult], None] | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Configure the containerised syft run.
+
+        ``docker_config`` is mounted read-only at ``/auth`` and the output file's
+        directory at ``/out``, so the SBOM is written back to ``output_path`` in
+        the requested ``output_format``. ``title`` defaults to one naming the
+        image being scanned.
+        """
         output = Path(output_path)
         super().__init__(
             title=title or f"Syft SBOM {image}",

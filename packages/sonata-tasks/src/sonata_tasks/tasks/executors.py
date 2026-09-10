@@ -1,7 +1,14 @@
 """Compatibility import for injected-runner adapters."""
 
-from sonata_tasks.execution.adapters import HostCommandTaskExecutor, VmCommandTaskExecutor
-from sonata_tasks.execution.ports import CommandRunResult, HostCommandRunner, VmCommandRunner
+from sonata_tasks.execution.adapters import (
+    HostCommandTaskExecutor,
+    VmCommandTaskExecutor,
+)
+from sonata_tasks.execution.ports import (
+    CommandRunResult,
+    HostCommandRunner,
+    VmCommandRunner,
+)
 
 VmCommandResult = CommandRunResult
 

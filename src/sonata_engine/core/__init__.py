@@ -1,3 +1,12 @@
+"""Core workflow primitives: tasks, resources, selection, and compiled results.
+
+This package is the stable surface for building and running a workflow: the
+`Task` hierarchy and its `Steps` composite, the `Resource` lifecycle pairing,
+`Workflow` itself, and the immutable compiled/result types the runner returns.
+Everything here is re-exported for import from `sonata_engine.core`; the
+sibling modules are implementation detail behind that list.
+"""
+
 from sonata_engine.core.compiled import (
     CompiledTask,
     CompiledWorkflow,
@@ -16,13 +25,13 @@ __all__ = [
     "CompiledTask",
     "CompiledWorkflow",
     "Evidence",
-    "TaskInputs",
     "Resource",
     "ReusableTask",
     "Selection",
     "Steps",
     "Task",
     "TaskExecution",
+    "TaskInputs",
     "TaskOutcome",
     "Workflow",
     "WorkflowResult",

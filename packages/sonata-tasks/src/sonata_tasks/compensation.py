@@ -1,3 +1,5 @@
+"""Helpers for undoing partial work without masking the original failure."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -6,12 +8,16 @@ from typing import Any
 from sonata_engine import Resource, TaskInputs
 
 
-def best_effort(error: BaseException, cleanup: Callable[[], object], *, what: str) -> None:
+def best_effort(
+    error: BaseException, cleanup: Callable[[], object], *, what: str
+) -> None:
     """Run cleanup without replacing the error that required it."""
     try:
         _ = cleanup()
     except (OSError, RuntimeError) as cleanup_error:
-        error.add_note(f"Best-effort {what} after a failed acquire failed: {cleanup_error}")
+        error.add_note(
+            f"Best-effort {what} after a failed acquire failed: {cleanup_error}"
+        )
 
 
 def compensated_resource[T](
@@ -33,7 +39,9 @@ def compensated_resource[T](
         try:
             return acquire(inputs)
         except BaseException as error:
-            best_effort(error, lambda: compensate(inputs), what=f"compensation for {title}")
+            best_effort(
+                error, lambda: compensate(inputs), what=f"compensation for {title}"
+            )
             raise
 
     return Resource(

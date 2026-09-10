@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from sonata_tasks.process import managed_process_resource
-
 from sonata_engine import Resource, TaskInputs
+
+from sonata_tasks.process import managed_process_resource
 
 
 class FakeProcess:
@@ -41,8 +41,11 @@ def _spawner(process: FakeProcess, seen: list[dict[str, object]]):
 
 
 def _ready_once_spawned():
-    """False on the first call (the pre-spawn "is anything already up?" check),
-    True from the second call onward (the process we spawned is up)."""
+    """Build a readiness probe that reports ready only from its second call.
+
+    The first call is the pre-spawn "is anything already up?" check and returns
+    False; from the second call onward the process we spawned is up.
+    """
     calls = {"n": 0}
 
     def ready() -> bool:
@@ -54,7 +57,10 @@ def _ready_once_spawned():
 
 def test_it_builds_a_sonata_resource() -> None:
     resource = managed_process_resource(
-        title="Acquire thing", argv=("run",), ready=lambda: True, spawn=_spawner(FakeProcess(), [])
+        title="Acquire thing",
+        argv=("run",),
+        ready=lambda: True,
+        spawn=_spawner(FakeProcess(), []),
     )
 
     assert isinstance(resource, Resource)
@@ -240,7 +246,10 @@ def test_release_is_a_no_op_for_an_already_exited_process() -> None:
     process = FakeProcess()
     process.terminate()
     resource = managed_process_resource(
-        title="Acquire thing", argv=("run",), ready=lambda: True, spawn=_spawner(FakeProcess(), [])
+        title="Acquire thing",
+        argv=("run",),
+        ready=lambda: True,
+        spawn=_spawner(FakeProcess(), []),
     )
 
     resource.release(TaskInputs.empty(), process)

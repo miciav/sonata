@@ -1,9 +1,13 @@
+"""Forward a remote port to a registry upstream through a systemd socat unit."""
+
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import Any
 
 from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.transfer import RemoteCommandProvider, RemoteOperationResult
 
@@ -50,6 +54,22 @@ def registry_tunnel_resource[RequestT](
     title: str | None = None,
     requires: tuple[Resource[Any], ...] = (),
 ) -> Resource[None]:
+    """Forward ``listen_port`` on the remote host to a registry upstream.
+
+    Acquiring stops and resets any unit left by an earlier run, then starts a
+    transient ``systemd-run`` unit named ``unit_name`` that runs ``socat``
+    forwarding ``listen_port`` to ``registry_upstream:upstream_port``. A failed
+    acquire stops and resets the unit again before re-raising. Releasing stops
+    the unit best-effort and always resets it, so a failed stop cannot leave it
+    in a failed state.
+
+    ``registry_upstream`` may be a callable, in which case it is resolved at
+    acquire time and ``title`` defaults to a generic label.
+
+    Raises:
+        ValueError: If ``unit_name`` is empty.
+
+    """
     if not unit_name:
         raise ValueError("unit_name must not be empty")
     stop = ("sudo", "systemctl", "stop", unit_name)
@@ -60,10 +80,8 @@ def registry_tunnel_resource[RequestT](
         _require_tunnel_result(result, action=action, absent_ok=absent_ok)
 
     def quiet(argv: tuple[str, ...]) -> None:
-        try:
+        with contextlib.suppress(RuntimeError):
             _ = provider.exec_argv(request, argv)
-        except RuntimeError:
-            pass
 
     def stop_and_reset() -> None:
         quiet(stop)
@@ -73,7 +91,11 @@ def registry_tunnel_resource[RequestT](
         try:
             run(stop, action="acquire", absent_ok=True)
             run(reset, action="acquire", absent_ok=True)
-            upstream = registry_upstream() if callable(registry_upstream) else registry_upstream
+            upstream = (
+                registry_upstream()
+                if callable(registry_upstream)
+                else registry_upstream
+            )
             run(
                 (
                     "sudo",

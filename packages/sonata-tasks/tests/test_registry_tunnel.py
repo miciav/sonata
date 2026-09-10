@@ -2,11 +2,15 @@ from dataclasses import dataclass, field
 from typing import override
 
 import pytest
-from sonata_tasks.registry_tunnel import registry_tunnel_resource
-
 from sonata_engine import TaskInputs
 
-TUNNEL_OPTIONS = {"unit_name": "registry-tunnel", "listen_port": 5000, "upstream_port": 5000}
+from sonata_tasks.registry_tunnel import registry_tunnel_resource
+
+TUNNEL_OPTIONS = {
+    "unit_name": "registry-tunnel",
+    "listen_port": 5000,
+    "upstream_port": 5000,
+}
 
 
 @dataclass(frozen=True)
@@ -47,7 +51,12 @@ def test_acquire_runs_socat_tunnel_with_upstream_host():
     assert len(provider.calls) == 3
     assert all(seen_request is request for seen_request, _argv in provider.calls)
     assert provider.calls[0][1] == ("sudo", "systemctl", "stop", "registry-tunnel")
-    assert provider.calls[1][1] == ("sudo", "systemctl", "reset-failed", "registry-tunnel")
+    assert provider.calls[1][1] == (
+        "sudo",
+        "systemctl",
+        "reset-failed",
+        "registry-tunnel",
+    )
     assert provider.calls[2][1] == (
         "sudo",
         "systemd-run",
@@ -66,11 +75,16 @@ def test_acquire_tolerates_an_absent_previous_transient_unit():
         def exec_argv(self, request: object, argv: tuple[str, ...]) -> _Result:
             self.calls.append((request, argv))
             if argv[:2] == ("sudo", "systemctl"):
-                return _result(return_code=5, stderr="Unit nanofaas-registry-tunnel not loaded")
+                return _result(
+                    return_code=5, stderr="Unit nanofaas-registry-tunnel not loaded"
+                )
             return _result()
 
     resource = registry_tunnel_resource(
-        registry_upstream="10.0.0.42", provider=Provider(), request=object(), **TUNNEL_OPTIONS
+        registry_upstream="10.0.0.42",
+        provider=Provider(),
+        request=object(),
+        **TUNNEL_OPTIONS,
     )
 
     resource.acquire(TaskInputs.empty())
@@ -95,7 +109,7 @@ def test_release_stops_the_tunnel():
     assert "registry-tunnel" in argv
 
 
-@pytest.mark.parametrize(("fail_on", "calls"), ((0, 3), (1, 4), (2, 5)))
+@pytest.mark.parametrize(("fail_on", "calls"), [(0, 3), (1, 4), (2, 5)])
 def test_acquire_raises_and_compensates_on_each_failed_step(fail_on: int, calls: int):
     provider = _RecordingProvider(fail_on=fail_on)
     resource = registry_tunnel_resource(
@@ -142,7 +156,10 @@ def test_failed_acquire_propagates_programming_errors_from_cleanup():
             raise ValueError("bad provider contract")
 
     resource = registry_tunnel_resource(
-        registry_upstream="10.0.0.1", provider=BrokenProvider(), request=object(), **TUNNEL_OPTIONS
+        registry_upstream="10.0.0.1",
+        provider=BrokenProvider(),
+        request=object(),
+        **TUNNEL_OPTIONS,
     )
 
     with pytest.raises(ValueError, match="bad provider contract"):

@@ -96,49 +96,50 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 1: Add the two helper methods** (after `_retained_resources`):
 
 ```python
-    def _release_pending(
-        self,
-        pending: list[CompiledTask[object]],
-        release_errors: list[BaseException],
-        state: _RunState,
-        jrnl: Journal | None,
-        retained_resources: frozenset[int],
-    ) -> None:
-        """Run every pending release in reverse acquisition order."""
-        for compiled_task in reversed(pending):
-            self._release(compiled_task, release_errors, state, jrnl, retained_resources)
+def _release_pending(
+    self,
+    pending: list[CompiledTask[object]],
+    release_errors: list[BaseException],
+    state: _RunState,
+    jrnl: Journal | None,
+    retained_resources: frozenset[int],
+) -> None:
+    """Run every pending release in reverse acquisition order."""
+    for compiled_task in reversed(pending):
+        self._release(compiled_task, release_errors, state, jrnl, retained_resources)
 
-    def _raise_final(
-        self, main_error: BaseException | None, release_errors: list[BaseException]
-    ) -> None:
-        """Raise the run's outcome: critical errors first, then the primary
-        error with cleanup notes, else the collected cleanup errors."""
-        critical_error = (
-            main_error
-            if main_error is not None and not isinstance(main_error, Exception)
-            else next(
-                (error for error in release_errors if not isinstance(error, Exception)),
-                None,
-            )
+
+def _raise_final(
+    self, main_error: BaseException | None, release_errors: list[BaseException]
+) -> None:
+    """Raise the run's outcome: critical errors first, then the primary
+    error with cleanup notes, else the collected cleanup errors."""
+    critical_error = (
+        main_error
+        if main_error is not None and not isinstance(main_error, Exception)
+        else next(
+            (error for error in release_errors if not isinstance(error, Exception)),
+            None,
         )
-        if critical_error is not None:
-            if main_error is not None and main_error is not critical_error:
-                critical_error.add_note(f"Task error: {main_error}")
-            for error in release_errors:
-                if error is not critical_error:
-                    critical_error.add_note(f"Cleanup error: {error}")
-            raise critical_error
-        if main_error is not None:
-            if release_errors:
-                combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
-                    str(error) for error in release_errors
-                )
-                raise RuntimeError(combined) from main_error
-            raise main_error
+    )
+    if critical_error is not None:
+        if main_error is not None and main_error is not critical_error:
+            critical_error.add_note(f"Task error: {main_error}")
+        for error in release_errors:
+            if error is not critical_error:
+                critical_error.add_note(f"Cleanup error: {error}")
+        raise critical_error
+    if main_error is not None:
         if release_errors:
-            raise RuntimeError(
-                "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
+            combined = f"{main_error}\n\nCleanup errors:\n" + "\n".join(
+                str(error) for error in release_errors
             )
+            raise RuntimeError(combined) from main_error
+        raise main_error
+    if release_errors:
+        raise RuntimeError(
+            "Cleanup failed:\n" + "\n".join(str(error) for error in release_errors)
+        )
 ```
 
 - [ ] **Step 2: Rewrite the walk and tail of `_run_compiled`**
@@ -426,7 +427,9 @@ class _MergeState:
     seen_at_index: dict[int, int] = field(default_factory=dict)
 
 
-def _register_dependency(state: _MergeState, resource: Resource[Any], index: int) -> None:
+def _register_dependency(
+    state: _MergeState, resource: Resource[Any], index: int
+) -> None:
     """Register one resource at one consumer index, walking its dependencies.
 
     Depth-first visit; cycles raise `ResourceDependencyCycleError`. A 'done'
@@ -465,64 +468,66 @@ def _register_dependency(state: _MergeState, resource: Resource[Any], index: int
 Replace the entire body from the `# First/last consumer index per resource, in DFS declaration order.` comment through `return merged` with:
 
 ```python
-        # First/last consumer index per resource, in DFS declaration order.
-        state = _MergeState()
-        for index, (_task, requires) in enumerate(definitions):
-            for resource in requires:
-                _register_dependency(state, resource, index)
+# First/last consumer index per resource, in DFS declaration order.
+state = _MergeState()
+for index, (_task, requires) in enumerate(definitions):
+    for resource in requires:
+        _register_dependency(state, resource, index)
 
-        # Acquisition order: by first-consumer index, then discovery order.
-        acquire_rank = {key: rank for rank, key in enumerate(state.discovery)}
-        acquires_before: dict[int, list[int]] = {}
-        releases_after: dict[int, list[int]] = {}
-        for key in state.discovery:
-            acquires_before.setdefault(state.first[key], []).append(key)
-            releases_after.setdefault(state.last[key], []).append(key)
-        # Same-point acquires keep acquisition order; same-point releases reverse it.
-        for group in acquires_before.values():
-            group.sort(key=lambda key: acquire_rank[key])
-        for group in releases_after.values():
-            group.sort(key=lambda key: acquire_rank[key], reverse=True)
+# Acquisition order: by first-consumer index, then discovery order.
+acquire_rank = {key: rank for rank, key in enumerate(state.discovery)}
+acquires_before: dict[int, list[int]] = {}
+releases_after: dict[int, list[int]] = {}
+for key in state.discovery:
+    acquires_before.setdefault(state.first[key], []).append(key)
+    releases_after.setdefault(state.last[key], []).append(key)
+# Same-point acquires keep acquisition order; same-point releases reverse it.
+for group in acquires_before.values():
+    group.sort(key=lambda key: acquire_rank[key])
+for group in releases_after.values():
+    group.sort(key=lambda key: acquire_rank[key], reverse=True)
 
-        merged: list[CompiledTask[Any]] = []
-        for index, (task, requires) in enumerate(definitions):
-            for key in acquires_before.get(index, ()):
-                resource = state.resources[key]
-                op = ResourceOp(
-                    title=resource.title,
-                    resource=resource,
-                    operation=ResourceOperation.ACQUIRE,
-                    idempotent=resource.acquire_idempotent,
-                )
-                merged.append(
-                    CompiledTask(
-                        task_id="",
-                        task=op,
-                        required_resources=resource.requires,
-                        kind="acquire",
-                        resource=resource,
-                    )
-                )
-            merged.append(
-                CompiledTask(task_id="", task=task, required_resources=requires, kind="consumer")
+merged: list[CompiledTask[Any]] = []
+for index, (task, requires) in enumerate(definitions):
+    for key in acquires_before.get(index, ()):
+        resource = state.resources[key]
+        op = ResourceOp(
+            title=resource.title,
+            resource=resource,
+            operation=ResourceOperation.ACQUIRE,
+            idempotent=resource.acquire_idempotent,
+        )
+        merged.append(
+            CompiledTask(
+                task_id="",
+                task=op,
+                required_resources=resource.requires,
+                kind="acquire",
+                resource=resource,
             )
-            for key in releases_after.get(index, ()):
-                resource = state.resources[key]
-                op = ResourceOp(
-                    title=resource.release_title,
-                    resource=resource,
-                    operation=ResourceOperation.RELEASE,
-                )
-                merged.append(
-                    CompiledTask(
-                        task_id="",
-                        task=op,
-                        required_resources=resource.requires,
-                        kind="release",
-                        resource=resource,
-                    )
-                )
-        return merged
+        )
+    merged.append(
+        CompiledTask(
+            task_id="", task=task, required_resources=requires, kind="consumer"
+        )
+    )
+    for key in releases_after.get(index, ()):
+        resource = state.resources[key]
+        op = ResourceOp(
+            title=resource.release_title,
+            resource=resource,
+            operation=ResourceOperation.RELEASE,
+        )
+        merged.append(
+            CompiledTask(
+                task_id="",
+                task=op,
+                required_resources=resource.requires,
+                kind="release",
+                resource=resource,
+            )
+        )
+return merged
 ```
 
 `dataclass` and `field` are already imported in this module.
@@ -603,70 +608,71 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 - [ ] **Step 2: Add `_parse_record` and `_fold_record`** (after `_load`):
 
 ```python
-    def _parse_record(
-        self, raw_line: bytes, index: int, is_torn_tail: bool, line_start: int
-    ) -> dict[str, Any] | None:
-        """Decode and parse one journal line; None for a blank line or torn tail.
+def _parse_record(
+    self, raw_line: bytes, index: int, is_torn_tail: bool, line_start: int
+) -> dict[str, Any] | None:
+    """Decode and parse one journal line; None for a blank line or torn tail.
 
-        A torn tail (crash mid-write) is truncated and dropped. Any other
-        malformed line raises `CorruptJournalError`.
-        """
-        try:
-            line = raw_line.decode("utf-8")
-        except UnicodeError as exc:
-            if is_torn_tail:
-                self._truncate_torn_tail(line_start)
-                return None
-            raise CorruptJournalError(
-                f"{self.path}:{index + 1}: record is not valid UTF-8"
-            ) from exc
-        if not line.strip():
+    A torn tail (crash mid-write) is truncated and dropped. Any other
+    malformed line raises `CorruptJournalError`.
+    """
+    try:
+        line = raw_line.decode("utf-8")
+    except UnicodeError as exc:
+        if is_torn_tail:
+            self._truncate_torn_tail(line_start)
             return None
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            if is_torn_tail:
-                self._truncate_torn_tail(line_start)
-                return None
-            raise CorruptJournalError(
-                f"{self.path}:{index + 1}: malformed JSON record"
-            ) from exc
-        if not isinstance(record, dict):
-            raise CorruptJournalError(
-                f"{self.path}:{index + 1}: journal record must be an object"
-            )
-        return record
+        raise CorruptJournalError(
+            f"{self.path}:{index + 1}: record is not valid UTF-8"
+        ) from exc
+    if not line.strip():
+        return None
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as exc:
+        if is_torn_tail:
+            self._truncate_torn_tail(line_start)
+            return None
+        raise CorruptJournalError(
+            f"{self.path}:{index + 1}: malformed JSON record"
+        ) from exc
+    if not isinstance(record, dict):
+        raise CorruptJournalError(
+            f"{self.path}:{index + 1}: journal record must be an object"
+        )
+    return record
 
-    def _fold_record(
-        self, record: dict[str, Any], index: int, states: dict[str, TaskState]
-    ) -> None:
-        """Merge one task-outcome record into `states`; raises on malformed data.
 
-        Records are appended in order: a later record for the same (or higher)
-        attempt supersedes an earlier one -- terminal replaces started.
-        """
-        try:
-            task_id = str(record["task_id"])
-            attempt = int(record["attempt"])
-            status = str(record["status"])
-            raw_evidence = record.get("evidence", [])
-            evidence = _evidence_from_json(raw_evidence)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise CorruptJournalError(
-                f"{self.path}:{index + 1}: malformed journal record"
-            ) from exc
-        if status not in {"pending", "started", "passed", "failed", "skipped"}:
-            raise CorruptJournalError(
-                f"{self.path}:{index + 1}: invalid task status {status!r}"
-            )
-        existing = states.get(task_id)
-        if existing is None or attempt >= existing.attempt:
-            states[task_id] = TaskState(
-                task_id=task_id,
-                attempt=attempt,
-                status=status,
-                evidence=evidence,
-            )
+def _fold_record(
+    self, record: dict[str, Any], index: int, states: dict[str, TaskState]
+) -> None:
+    """Merge one task-outcome record into `states`; raises on malformed data.
+
+    Records are appended in order: a later record for the same (or higher)
+    attempt supersedes an earlier one -- terminal replaces started.
+    """
+    try:
+        task_id = str(record["task_id"])
+        attempt = int(record["attempt"])
+        status = str(record["status"])
+        raw_evidence = record.get("evidence", [])
+        evidence = _evidence_from_json(raw_evidence)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CorruptJournalError(
+            f"{self.path}:{index + 1}: malformed journal record"
+        ) from exc
+    if status not in {"pending", "started", "passed", "failed", "skipped"}:
+        raise CorruptJournalError(
+            f"{self.path}:{index + 1}: invalid task status {status!r}"
+        )
+    existing = states.get(task_id)
+    if existing is None or attempt >= existing.attempt:
+        states[task_id] = TaskState(
+            task_id=task_id,
+            attempt=attempt,
+            status=status,
+            evidence=evidence,
+        )
 ```
 
 Semantics preserved: a torn tail is always the last line, so the original `break` after truncation and the new `continue` (via `None`) are equivalent. `warned_mismatch` stays in `_load`; the retained-record branch keeps the original comment.

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -9,9 +8,9 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from sonata_tasks.archive import source_archive_resource
-
 from sonata_engine import Resource, TaskInputs
+
+from sonata_tasks.archive import source_archive_resource
 
 
 @dataclass
@@ -56,11 +55,16 @@ class RecordingProvider:
             for path in paths:
                 if path.exists():
                     subprocess.run(
-                        ["rm", "-rf", str(path)], check=True, capture_output=True, text=True
+                        ["rm", "-rf", str(path)],
+                        check=True,
+                        capture_output=True,
+                        text=True,
                     )
         return ShellResult()
 
-    def transfer_to(self, request: object, *, source: Path, destination: str) -> ShellResult:
+    def transfer_to(
+        self, request: object, *, source: Path, destination: str
+    ) -> ShellResult:
         self.transfer_seen.append((source, destination))
         # Simulate: copy source content to destination on "remote"
         Path(destination).write_bytes(source.read_bytes())
@@ -99,8 +103,10 @@ def git_repo() -> Path:
 def test_acquire_archives_transfers_verifies_and_extracts(
     git_repo: Path,
 ) -> None:
-    """The acquire sequence runs the expected steps in order and returns the
-    remote source dir."""
+    """Run the acquire sequence and return the remote source dir.
+
+    The steps run in order and the extracted README matches what was committed.
+    """
     remote_dir = Path(tempfile.mkdtemp())
     remote_archive = str(remote_dir / "source.tar")
     remote_source_dir = str(remote_dir / "extracted")
@@ -125,14 +131,20 @@ def test_acquire_archives_transfers_verifies_and_extracts(
     assert provider.exec_seen[0] == ("mkdir", "-p", str(Path(remote_archive).parent))
     assert provider.exec_seen[1] == ("sha256sum", remote_archive)
     assert provider.exec_seen[2] == ("mkdir", "-p", remote_source_dir)
-    assert provider.exec_seen[3] == ("tar", "-xf", remote_archive, "-C", remote_source_dir)
+    assert provider.exec_seen[3] == (
+        "tar",
+        "-xf",
+        remote_archive,
+        "-C",
+        remote_source_dir,
+    )
 
     # Verify the extracted content
     extracted_readme = Path(remote_source_dir) / "README.md"
     assert extracted_readme.read_text() == "# hello\n"
 
     # Clean up
-    os.unlink(remote_archive)
+    Path(remote_archive).unlink()
 
 
 def test_release_removes_source_dir(git_repo: Path) -> None:
@@ -158,7 +170,7 @@ def test_release_removes_source_dir(git_repo: Path) -> None:
 
     assert not Path(remote_source_dir).exists()
     assert provider.exec_seen[-1] == ("rm", "-rf", remote_source_dir)
-    os.unlink(remote_archive)
+    Path(remote_archive).unlink()
 
 
 def test_release_propagates_programming_errors(git_repo: Path) -> None:
@@ -288,7 +300,7 @@ def test_release_tolerates_provider_error() -> None:
     provider = FailRmProvider()
 
     resource = source_archive_resource(
-        repo_root=Path("."),
+        repo_root=Path(),
         commit="HEAD",
         remote_source_dir="/tmp/src",
         remote_archive="/tmp/src.tar",
@@ -308,7 +320,9 @@ def test_transfer_failure_raises(git_repo: Path) -> None:
 
     class FailTransferProvider(RecordingProvider):
         @override
-        def transfer_to(self, request: object, *, source: Path, destination: str) -> ShellResult:
+        def transfer_to(
+            self, request: object, *, source: Path, destination: str
+        ) -> ShellResult:
             self.transfer_seen.append((source, destination))
             return ShellResult(return_code=1, stderr="scp failed")
 
@@ -369,7 +383,7 @@ def test_resource_is_resource_of_str() -> None:
     provider = RecordingProvider()
 
     resource = source_archive_resource(
-        repo_root=Path("."),
+        repo_root=Path(),
         commit="HEAD",
         remote_source_dir="/tmp/src",
         remote_archive="/tmp/src.tar",

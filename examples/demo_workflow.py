@@ -6,8 +6,9 @@ Run with:
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
+from typing import ClassVar
 
 from sonata_engine import (
     Resource,
@@ -30,9 +31,18 @@ class ConsoleSink:
     Without one bound, the engine reports nowhere and `subtask` is a no-op.
     """
 
-    _MARKS = {"task.started": "->", "task.passed": "ok", "task.failed": "XX"}
+    _MARKS: ClassVar[dict[str, str]] = {
+        "task.started": "->",
+        "task.passed": "ok",
+        "task.failed": "XX",
+    }
 
     def emit(self, event: WorkflowEvent) -> None:
+        """Print one workflow event as a line, indented for nested subtasks.
+
+        Log lines render as a dotted detail line; every other event renders as
+        its mark from `_MARKS` followed by the task id.
+        """
         if event.kind == "log.line":
             print(f"        . {event.line}")
             return
@@ -41,37 +51,59 @@ class ConsoleSink:
 
     @contextmanager
     def status(self, label: str) -> Generator[None, None, None]:
+        """Run the wrapped block without rendering any progress display."""
         yield
 
 
 class PrepareSource(Task[str]):
+    """Produce the source tree the image builds consume.
+
+    A stand-in for a real checkout: it reports `/tmp/src` without touching the
+    filesystem.
+    """
+
     title = "Prepare source"
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[str]:
+        """Log the preparation step and hand back the source path."""
         workflow_log("preparing source tree...")
         return TaskOutcome(value="/tmp/src")
 
 
 class BuildImage(Task[tuple[str, ...]]):
-    """One image build. The same class occupies every position in the chain:
-    the first instance starts the tuple; later instances extend it.
+    """One image build, reused at every position in the chain.
+
+    The first instance starts the accumulated tuple; later instances extend
+    the tuple their upstream step produced.
     """
 
     def __init__(self, image: str, *, first: bool = False) -> None:
+        """Configure a build step for `image`.
+
+        Pass `first=True` for the step that starts the image tuple instead of
+        extending one.
+        """
         self.title = f"Build {image}"
         self._image = image
         self._first = first
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[str, ...]]:
+        """Append this image's registry reference to the upstream tuple."""
         workflow_log(f"docker build {self._image}")
         built = () if self._first else inputs.upstream()
         return TaskOutcome(value=(*built, f"registry.example/{self._image}:v1"))
 
 
 class ScanImages(Task[tuple[str, ...]]):
+    """Report how many images the build steps produced.
+
+    The tuple passes through unchanged; only the count is logged.
+    """
+
     title = "Scan for vulnerabilities"
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[tuple[str, ...]]:
+        """Log the number of upstream images and pass the tuple through."""
         built = inputs.upstream()
         workflow_log(f"scanning {len(built)} images")
         return TaskOutcome(value=built)
@@ -87,9 +119,16 @@ def _stop_builder_vm(inputs: TaskInputs, vm_id: str) -> None:
 
 
 class PushImages(Task[None]):
+    """Simulate publishing the built images to the registry.
+
+    Declared with the builder VM as a required resource, so the VM is live
+    while this step runs.
+    """
+
     title = "Push images"
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
+        """Log the push and return an empty outcome."""
         workflow_log("pushing images (needs the builder VM)...")
         return TaskOutcome()
 
@@ -107,7 +146,10 @@ def main() -> None:
         Steps(
             title="Build images",
             steps=(
-                *(BuildImage(image, first=index == 0) for index, image in enumerate(IMAGES)),
+                *(
+                    BuildImage(image, first=index == 0)
+                    for index, image in enumerate(IMAGES)
+                ),
                 ScanImages(),
             ),
         )
@@ -126,7 +168,8 @@ def main() -> None:
         print(f"  {execution.task_id:<25} {execution.status:<8} {outcome}")
 
     print(
-        f"\n{len(IMAGES)} images built as {len(IMAGES) + 1} reported steps, inside 1 compiled unit."
+        f"\n{len(IMAGES)} images built as {len(IMAGES) + 1} reported steps, "
+        "inside 1 compiled unit."
     )
 
 

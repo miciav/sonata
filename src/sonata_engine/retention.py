@@ -79,7 +79,7 @@ def release_retained(
     if not outstanding:
         return ()
 
-    inputs = TaskInputs._for_resource_values({}, ())  # noqa: SLF001
+    inputs = TaskInputs._for_resource_values({}, ())
     errors: list[BaseException] = []
     released: list[str] = []
     unknown: list[str] = []
@@ -124,7 +124,9 @@ def release_retained(
     return tuple(released)
 
 
-def _record_released(journal: JournalConfig, record: dict[str, Any], title: str) -> None:
+def _record_released(
+    journal: JournalConfig, record: dict[str, Any], title: str
+) -> None:
     entry = {
         "schema_version": SCHEMA_VERSION,
         "workflow_id": record.get("workflow_id"),
@@ -133,6 +135,6 @@ def _record_released(journal: JournalConfig, record: dict[str, Any], title: str)
         "kind": "released",
         "resource": title,
     }
-    with open(journal.path, "a", encoding="utf-8") as handle:
+    with journal.path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, separators=(",", ":")) + "\n")
         handle.flush()

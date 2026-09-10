@@ -5,6 +5,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pytest
+
 from sonata_tasks.execution.models import CommandOptions, CommandTaskSpec, TaskResult
 
 
@@ -32,7 +33,9 @@ def test_options_reject_empty_exit_codes_and_non_string_environment() -> None:
 
 def test_spec_has_one_options_source_and_a_single_role_default() -> None:
     options = CommandOptions(cwd=Path("/repo"), remote_dir="/srv/app")
-    spec = CommandTaskSpec(task_id="x", summary="X", argv=("echo", "ok"), options=options)
+    spec = CommandTaskSpec(
+        task_id="x", summary="X", argv=("echo", "ok"), options=options
+    )
     assert spec.role == "host"
     assert spec.execution_role == "host"
     assert spec.options is options

@@ -3,15 +3,15 @@ from __future__ import annotations
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+from sonata_engine.workflow.context import bind_workflow_sink
+from sonata_engine.workflow.events import WorkflowEvent
+
 from sonata_tasks.shell import (
     RecordingShell,
     ScriptedShell,
     ShellExecutionResult,
     SubprocessShell,
 )
-
-from sonata_engine.workflow.context import bind_workflow_sink
-from sonata_engine.workflow.events import WorkflowEvent
 
 
 def test_shell_execution_result_captures_stdout_stderr() -> None:
@@ -64,7 +64,7 @@ class _FakeSink:
 
 
 def test_subprocess_shell_routes_output_to_workflow_log_when_sink_active() -> None:
-    """When a workflow sink is bound, _emit_output forwards lines to it via workflow_log.
+    """Forward output lines to the workflow log while a sink is bound.
 
     bind_workflow_sink is a context manager; we use it as such for setup/teardown.
     The sink must satisfy the WorkflowSink protocol (emit + status methods).

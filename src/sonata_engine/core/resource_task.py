@@ -1,3 +1,10 @@
+"""Resources and the acquire/release units that manage their lifetime.
+
+A `Resource` bundles the two callbacks a task needs to obtain and later give
+back an expensive thing (a VM, a token, a mounted image). The compiler turns
+each one into `ResourceOp` units spliced around its consumers.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -42,10 +49,13 @@ class Resource[T]:
 
     @property
     def release_title(self) -> str:
+        """Title for the release unit, derived from the resource's own title."""
         return f"Release {self.title.removeprefix('Acquire ')}"
 
 
 class ResourceOperation(StrEnum):
+    """Which half of a resource's lifecycle a `ResourceOp` performs."""
+
     ACQUIRE = "acquire"
     RELEASE = "release"
 

@@ -1,3 +1,5 @@
+"""Create and inspect multi-platform image manifests with buildx imagetools."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,7 +9,9 @@ from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.execution.ports import CommandTaskExecutor
 
 
-def _docker_options(options: CommandOptions | None, docker_config: str) -> CommandOptions:
+def _docker_options(
+    options: CommandOptions | None, docker_config: str
+) -> CommandOptions:
     current = options or CommandOptions()
     return CommandOptions(
         cwd=current.cwd,
@@ -19,6 +23,8 @@ def _docker_options(options: CommandOptions | None, docker_config: str) -> Comma
 
 
 class ImagetoolsCreateTask(CommandTask):
+    """Create a manifest list tagging ``sources`` as one multi-platform image."""
+
     def __init__(
         self,
         *,
@@ -32,6 +38,11 @@ class ImagetoolsCreateTask(CommandTask):
         verify: Callable[[TaskResult], None] | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Configure ``docker buildx imagetools create --tag tag sources``.
+
+        ``docker_config`` is exported as ``DOCKER_CONFIG`` for the command, and
+        ``title`` defaults to one naming the tag.
+        """
         super().__init__(
             title=title or f"Create manifest {tag}",
             argv=("docker", "buildx", "imagetools", "create", "--tag", tag, *sources),
@@ -44,6 +55,8 @@ class ImagetoolsCreateTask(CommandTask):
 
 
 class ImagetoolsInspectTask(CommandTask):
+    """Inspect a manifest list or image reference and print its platforms."""
+
     def __init__(
         self,
         *,
@@ -56,6 +69,11 @@ class ImagetoolsInspectTask(CommandTask):
         verify: Callable[[TaskResult], None] | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Configure ``docker buildx imagetools inspect reference``.
+
+        ``docker_config`` is exported as ``DOCKER_CONFIG`` for the command, and
+        ``title`` defaults to one naming the reference.
+        """
         super().__init__(
             title=title or f"Inspect manifest {reference}",
             argv=("docker", "buildx", "imagetools", "inspect", reference),

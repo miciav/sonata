@@ -14,6 +14,7 @@ def test_root_import_does_not_eagerly_import_optional_dependencies() -> None:
 
     code = (
         "import sonata_tasks,sys; "
-        "assert not {'httpx','azure_vm','multipass','proxmox_sdk'}.intersection(sys.modules)"
+        "assert not "
+        "{'httpx','azure_vm','multipass','proxmox_sdk'}.intersection(sys.modules)"
     )
     subprocess.run((sys.executable, "-c", code), check=True)

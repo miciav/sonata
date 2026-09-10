@@ -52,7 +52,10 @@ Measured against `d53a7a9`, not recalled:
 ### One construct, always sequential
 
 ```python
-Steps(title="Deploy the chart", steps=(HelmInstall(chart), WaitRollout(), ResolveEndpoint()))
+Steps(
+    title="Deploy the chart",
+    steps=(HelmInstall(chart), WaitRollout(), ResolveEndpoint()),
+)
 ```
 
 `Steps` is a concrete `Task[Any]` in `core/steps.py`, exported from

@@ -1,3 +1,5 @@
+"""Run cosign signing, attestation and verification inside a container."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -19,6 +21,8 @@ _KEY_COSIGN = "/key.cosign"
 
 
 class CosignTask(CommandTask):
+    """Invoke one cosign operation against an image, in a throwaway container."""
+
     def __init__(
         self,  # NOSONAR (S107): keyword-only tool configuration
         *,
@@ -41,20 +45,44 @@ class CosignTask(CommandTask):
         public_key_file: str | None = None,
         output_file: str | None = None,
     ) -> None:
+        """Configure the containerised cosign invocation.
+
+        ``docker_config`` and ``key_file`` are mounted read-only, plus whichever
+        of ``public_key_file``, ``predicate_file`` and ``sbom_file`` the chosen
+        ``operation`` reads. The cosign password is read from ``password_file``
+        by the wrapping shell and exported as ``COSIGN_PASSWORD``, so it never
+        appears in the argv. ``output_file`` is where ``public-key`` writes its
+        key; ``title`` defaults to one naming the operation and image.
+        """
         run = _docker_run_args(
-            operation, docker_config, key_file, public_key_file, predicate_file, sbom_file
+            operation,
+            docker_config,
+            key_file,
+            public_key_file,
+            predicate_file,
+            sbom_file,
         )
         run.append(tool_image)
         run.extend(
             _cosign_command(
-                operation, image, output_file, predicate_type=predicate_type, sbom_type=sbom_type
+                operation,
+                image,
+                output_file,
+                predicate_type=predicate_type,
+                sbom_type=sbom_type,
             )
         )
         if operation == "public-key":
-            assert output_file is not None
-            script = (
-                'pw=$(cat "$1"); out="$2"; shift 2; COSIGN_PASSWORD="$pw" "$@" > "$out"'  # NOSONAR
-            )
+            # nosec B101 - this narrows an Optional for the type checker rather
+            # than guarding a runtime invariant: _cosign_command() above already
+            # raises ValueError when public-key is asked for without an
+            # output_file, so the None branch is unreachable from here. Turning
+            # it into a raise would be dead code, and -O stripping the assert
+            # changes nothing that can actually happen.
+            assert output_file is not None  # nosec B101
+            # The NOSONAR marker has to sit on the same line as the script it
+            # annotates, so this line cannot be wrapped to satisfy E501.
+            script = 'pw=$(cat "$1"); out="$2"; shift 2; COSIGN_PASSWORD="$pw" "$@" > "$out"'  # NOSONAR  # noqa: E501
             positional = (password_file, output_file, *run)
         else:
             script = 'pw=$(cat "$1"); shift; COSIGN_PASSWORD="$pw" exec "$@"'  # NOSONAR
@@ -129,7 +157,14 @@ def _cosign_command(
     if operation == "verify":
         return ["verify", "--key", "/pub.key", image]
     if operation == "verify-attestation":
-        return ["verify-attestation", "--key", "/pub.key", "--type", predicate_type, image]
+        return [
+            "verify-attestation",
+            "--key",
+            "/pub.key",
+            "--type",
+            predicate_type,
+            image,
+        ]
     if operation == "public-key":
         if output_file is None:
             raise ValueError("cosign public-key needs an output_file")

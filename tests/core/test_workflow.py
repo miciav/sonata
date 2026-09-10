@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 import pytest
 
@@ -46,8 +46,11 @@ def test_run_is_the_single_v2_entrypoint_and_preserves_outcomes() -> None:
 
 
 def test_invalid_task_outcome_error_is_not_re_exported_from_workflow_module() -> None:
-    """`InvalidTaskOutcomeError` lives in `sonata_engine.errors` only -- v2 has no
-    compatibility layer, so this module must not re-export it under its own name."""
+    """Assert the workflow module does not re-export `InvalidTaskOutcomeError`.
+
+    `InvalidTaskOutcomeError` lives in `sonata_engine.errors` only -- v2 has no
+    compatibility layer, so this module must not re-export it under its own name.
+    """
     import sonata_engine.core.workflow as workflow_module
 
     assert "InvalidTaskOutcomeError" not in vars(workflow_module).get("__all__", ())
@@ -202,7 +205,10 @@ def test_failed_event_error_does_not_mask_task_root_cause() -> None:
     workflow.add(_BoomTask())
 
     sink = _FailOnTaskFailedSink()
-    with bind_workflow_sink(sink), pytest.raises(RuntimeError, match="boom") as exc_info:
+    with (
+        bind_workflow_sink(sink),
+        pytest.raises(RuntimeError, match="boom") as exc_info,
+    ):
         workflow.run()
 
     assert any("sink secondary" in note for note in exc_info.value.__notes__)
@@ -247,8 +253,11 @@ def test_run_is_noop_safe_without_sink() -> None:
 
 
 def test_subtasks_do_not_become_compiled_units() -> None:
-    """The whole point: a step made of many stays one unit, so ordinals and
-    selection are unaffected by what a task does inside its own run()."""
+    """Assert a step made of many subtasks stays one compiled unit.
+
+    The whole point: a step made of many stays one unit, so ordinals and
+    selection are unaffected by what a task does inside its own run().
+    """
 
     class Composite(Task[None]):
         title = "Build images"

@@ -1,3 +1,5 @@
+"""Narrowing a workflow to a slice of its consumer tasks."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ class Selection:
     until: str | None = None
 
     def __post_init__(self) -> None:
+        """Reject `only` combined with `start` or `until`."""
         if self.only is not None and (self.start is not None or self.until is not None):
             raise SelectionError("only is mutually exclusive with start and until")
 

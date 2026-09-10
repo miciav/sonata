@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from sonata_tasks.vm.models import VmRequest
 from sonata_tasks.vm.providers.azure import AzureVmProvider
 
@@ -17,14 +18,14 @@ def _make_provider() -> AzureVmProvider:
 
 
 def _make_request(**kwargs: Any) -> VmRequest:
-    defaults: dict[str, Any] = dict(
-        lifecycle="azure",
-        name="test-vm",
-        user="ubuntu",
-        azure_resource_group="rg-test",
-        azure_location="eastus",
-        azure_ssh_key_path="/home/user/.ssh/id_ed25519",
-    )
+    defaults: dict[str, Any] = {
+        "lifecycle": "azure",
+        "name": "test-vm",
+        "user": "ubuntu",
+        "azure_resource_group": "rg-test",
+        "azure_location": "eastus",
+        "azure_ssh_key_path": "/home/user/.ssh/id_ed25519",
+    }
     defaults.update(kwargs)
     return VmRequest(**defaults)
 
@@ -135,7 +136,7 @@ def test_client_uses_private_key_for_ssh(mock_client_cls, tmp_path) -> None:
 
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
 def test_connection_host(mock_client_cls) -> None:
-    client_mock, vm_mock = _make_azure_client_mock()
+    client_mock, _vm_mock = _make_azure_client_mock()
     mock_client_cls.return_value = client_mock
     provider = _make_provider()
     req = _make_request()
@@ -143,9 +144,12 @@ def test_connection_host(mock_client_cls) -> None:
     assert host == "10.0.0.1"
 
 
-@patch("sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure", return_value=False)
+@patch(
+    "sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure",
+    return_value=False,
+)
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_teardown_success(mock_client_cls, _gone) -> None:
+def test_teardown_success(mock_client_cls, mock_exists) -> None:
     client_mock, vm_mock = _make_azure_client_mock()
     mock_client_cls.return_value = client_mock
     provider = _make_provider()
@@ -156,9 +160,12 @@ def test_teardown_success(mock_client_cls, _gone) -> None:
     assert result.return_code == 0
 
 
-@patch("sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure", return_value=False)
+@patch(
+    "sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure",
+    return_value=False,
+)
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_teardown_vm_not_found_is_ignored(mock_client_cls, _gone) -> None:
+def test_teardown_vm_not_found_is_ignored(mock_client_cls, mock_exists) -> None:
     from azure_vm.exceptions import VmNotFoundError
 
     client_mock, vm_mock = _make_azure_client_mock()
@@ -170,9 +177,12 @@ def test_teardown_vm_not_found_is_ignored(mock_client_cls, _gone) -> None:
     assert result.return_code == 0
 
 
-@patch("sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure", return_value=True)
+@patch(
+    "sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure",
+    return_value=True,
+)
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_ensure_running(mock_client_cls, _exists) -> None:
+def test_ensure_running(mock_client_cls, mock_exists) -> None:
     client_mock = MagicMock()
     mock_client_cls.return_value = client_mock
     provider = _make_provider()
@@ -182,9 +192,14 @@ def test_ensure_running(mock_client_cls, _exists) -> None:
     assert result.return_code == 0
 
 
-@patch("sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure", return_value=True)
+@patch(
+    "sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure",
+    return_value=True,
+)
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_ensure_running_forwards_request_disk_as_gibibytes(mock_client_cls, _exists) -> None:
+def test_ensure_running_forwards_request_disk_as_gibibytes(
+    mock_client_cls, mock_exists
+) -> None:
     client_mock = MagicMock()
     mock_client_cls.return_value = client_mock
     provider = _make_provider()
@@ -278,7 +293,9 @@ def test_release_nsg_rules_are_restricted_to_explicit_sources(mock_run) -> None:
 
 
 @patch("sonata_tasks.vm.providers.azure.subprocess.run")
-def test_release_nsg_restriction_fails_closed_on_mismatched_azure_response(mock_run) -> None:
+def test_release_nsg_restriction_fails_closed_on_mismatched_azure_response(
+    mock_run,
+) -> None:
     process = MagicMock()
     process.returncode = 0
     process.stdout = json.dumps(["*"])
@@ -294,9 +311,11 @@ def test_release_nsg_restriction_fails_closed_on_mismatched_azure_response(mock_
         )
 
 
-@pytest.mark.parametrize("source", ("0.0.0.0/0", "::/0"))
+@pytest.mark.parametrize("source", ["0.0.0.0/0", "::/0"])
 @patch("sonata_tasks.vm.providers.azure.subprocess.run")
-def test_release_nsg_restriction_rejects_unbounded_source(mock_run, source: str) -> None:
+def test_release_nsg_restriction_rejects_unbounded_source(
+    mock_run, source: str
+) -> None:
     provider = _make_provider()
 
     with pytest.raises(ValueError, match="must be bounded"):
@@ -345,7 +364,9 @@ def test_transfer_to(mock_client_cls) -> None:
     mock_client_cls.return_value = client_mock
     provider = _make_provider()
     req = _make_request()
-    result = provider.transfer_to(req, source=Path("/local/file"), destination="/remote/file")
+    result = provider.transfer_to(
+        req, source=Path("/local/file"), destination="/remote/file"
+    )
     vm_mock.transfer.assert_called_once_with("/local/file", "/remote/file")
     assert result.return_code == 0
 
@@ -353,7 +374,7 @@ def test_transfer_to(mock_client_cls) -> None:
 @patch("sonata_tasks.vm.providers.azure.subprocess.run")
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
 def test_transfer_from(mock_client_cls, mock_subproc) -> None:
-    client_mock, vm_mock = _make_azure_client_mock()
+    client_mock, _vm_mock = _make_azure_client_mock()
     mock_client_cls.return_value = client_mock
     proc = MagicMock()
     proc.returncode = 0
@@ -362,7 +383,9 @@ def test_transfer_from(mock_client_cls, mock_subproc) -> None:
     mock_subproc.return_value = proc
     provider = _make_provider()
     req = _make_request()
-    result = provider.transfer_from(req, source="/remote/file", destination=Path("/local/file"))
+    result = provider.transfer_from(
+        req, source="/remote/file", destination=Path("/local/file")
+    )
     assert result.return_code == 0
     assert "scp" in result.command
 
@@ -370,7 +393,7 @@ def test_transfer_from(mock_client_cls, mock_subproc) -> None:
 @patch("sonata_tasks.vm.providers.azure.subprocess.run")
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
 def test_transfer_from_no_ssh_key(mock_client_cls, mock_subproc) -> None:
-    client_mock, vm_mock = _make_azure_client_mock()
+    client_mock, _vm_mock = _make_azure_client_mock()
     mock_client_cls.return_value = client_mock
     proc = MagicMock()
     proc.returncode = 0
@@ -380,18 +403,27 @@ def test_transfer_from_no_ssh_key(mock_client_cls, mock_subproc) -> None:
     provider = _make_provider()
     req = _make_request(azure_ssh_key_path=None)
     # patch find_ssh_private_key_path to return None so no -i flag
-    with patch("sonata_tasks.vm.providers.azure.find_ssh_private_key_path", return_value=None):
-        result = provider.transfer_from(req, source="/remote/file", destination=Path("/local"))
+    with patch(
+        "sonata_tasks.vm.providers.azure.find_ssh_private_key_path", return_value=None
+    ):
+        result = provider.transfer_from(
+            req, source="/remote/file", destination=Path("/local")
+        )
     assert result.return_code == 0
     assert "-i" not in result.command
 
 
 @patch("sonata_tasks.vm.providers.azure.subprocess.run")
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_ensure_running_recreates_a_vm_deleted_outside_tofu(mock_client_cls, mock_run) -> None:
-    """The SDK reports "running" from the local tofu workspace, whose vm_state
+def test_ensure_running_recreates_a_vm_deleted_outside_tofu(
+    mock_client_cls, mock_run
+) -> None:
+    """Recreate the VM when Azure no longer has it, despite a "running" SDK state.
+
+    The SDK reports "running" from the local tofu workspace, whose vm_state
     output only echoes the desired_state variable, so a VM deleted out of band
-    looks running forever. Azure is the authority."""
+    looks running forever. Azure is the authority.
+    """
     client_mock = MagicMock()
     mock_client_cls.return_value = client_mock
     missing = MagicMock(returncode=1, stdout="", stderr="(ResourceNotFound)")
@@ -418,7 +450,9 @@ def test_azure_existence_probe_does_not_hide_cli_failures(mock_run) -> None:
 
 @patch("sonata_tasks.vm.providers.azure.subprocess.run")
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_ensure_running_keeps_the_fast_path_for_a_live_vm(mock_client_cls, mock_run) -> None:
+def test_ensure_running_keeps_the_fast_path_for_a_live_vm(
+    mock_client_cls, mock_run
+) -> None:
     client_mock = MagicMock()
     mock_client_cls.return_value = client_mock
     mock_run.return_value = MagicMock(returncode=0, stdout='"Succeeded"\n', stderr="")
@@ -429,13 +463,21 @@ def test_ensure_running_keeps_the_fast_path_for_a_live_vm(mock_client_cls, mock_
     client_mock.launch.assert_not_called()
 
 
-@patch("sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure", return_value=True)
+@patch(
+    "sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure",
+    return_value=True,
+)
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_teardown_fails_when_the_vm_survives_in_azure(mock_client_cls, _alive) -> None:
-    """`AzureClient.get_vm` raises VmNotFoundError from a check of the LOCAL
+def test_teardown_fails_when_the_vm_survives_in_azure(
+    mock_client_cls, mock_exists
+) -> None:
+    """Fail teardown when Azure still has the VM, even if the local SDK does not.
+
+    `AzureClient.get_vm` raises VmNotFoundError from a check of the LOCAL
     ~/.azure-vm-sdk workspace, never of Azure. Swallowing it reported success
     while the VM kept billing -- on any machine or CI runner without that
-    workspace. Azure is the authority."""
+    workspace. Azure is the authority.
+    """
     from azure_vm.exceptions import VmNotFoundError
 
     client_mock, vm_mock = _make_azure_client_mock()
@@ -449,11 +491,19 @@ def test_teardown_fails_when_the_vm_survives_in_azure(mock_client_cls, _alive) -
     assert "rg-test" in result.stderr
 
 
-@patch("sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure", return_value=True)
+@patch(
+    "sonata_tasks.vm.providers.azure.AzureVmProvider._exists_in_azure",
+    return_value=True,
+)
 @patch("sonata_tasks.vm.providers.azure.AzureClient")
-def test_teardown_fails_when_tofu_destroy_left_the_vm_behind(mock_client_cls, _alive) -> None:
-    """Not only the missing-workspace path: a `tofu destroy` that exits clean but
-    leaves the VM must fail too."""
+def test_teardown_fails_when_tofu_destroy_left_the_vm_behind(
+    mock_client_cls, mock_exists
+) -> None:
+    """Fail teardown when a clean `tofu destroy` leaves the VM behind in Azure.
+
+    Not only the missing-workspace path: a `tofu destroy` that exits clean but
+    leaves the VM must fail too.
+    """
     client_mock, vm_mock = _make_azure_client_mock()
     mock_client_cls.return_value = client_mock
 

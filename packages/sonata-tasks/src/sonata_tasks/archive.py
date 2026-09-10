@@ -1,11 +1,15 @@
+"""Ship a git commit's tree to a remote host as an extracted source archive."""
+
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import subprocess
 import tempfile
 from pathlib import Path
 
 from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.compensation import best_effort
 from sonata_tasks.transfer import RemoteProvider
 
@@ -19,29 +23,41 @@ def _exec[RequestT](
     if result.return_code != 0:
         detail = result.stderr or result.stdout
         raise RuntimeError(
-            f"remote command failed (exit {result.return_code})" + (f": {detail}" if detail else "")
+            f"remote command failed (exit {result.return_code})"
+            + (f": {detail}" if detail else "")
         )
     return result.stdout
 
 
 def _transfer_archive[RequestT](
-    provider: RemoteProvider[RequestT], request: RequestT, archive_path: Path, remote_archive: str
+    provider: RemoteProvider[RequestT],
+    request: RequestT,
+    archive_path: Path,
+    remote_archive: str,
 ) -> None:
-    result = provider.transfer_to(request, source=archive_path, destination=remote_archive)
+    result = provider.transfer_to(
+        request, source=archive_path, destination=remote_archive
+    )
     if not isinstance(result.return_code, int) or isinstance(result.return_code, bool):
         raise RuntimeError("transfer returned no integer return_code")
     if result.return_code != 0:
         detail = result.stderr or result.stdout
         raise RuntimeError(
-            f"transfer failed (exit {result.return_code})" + (f": {detail}" if detail else "")
+            f"transfer failed (exit {result.return_code})"
+            + (f": {detail}" if detail else "")
         )
 
 
 def _verify_remote_archive[RequestT](
-    provider: RemoteProvider[RequestT], request: RequestT, remote_archive: str, local_checksum: str
+    provider: RemoteProvider[RequestT],
+    request: RequestT,
+    remote_archive: str,
+    local_checksum: str,
 ) -> None:
     try:
-        remote_checksum = _exec(provider, request, ("sha256sum", remote_archive)).split()[0]
+        remote_checksum = _exec(
+            provider, request, ("sha256sum", remote_archive)
+        ).split()[0]
         if remote_checksum != local_checksum:
             raise RuntimeError(
                 f"sha256sum mismatch: local={local_checksum}, remote={remote_checksum}"
@@ -63,7 +79,9 @@ def _extract_remote_archive[RequestT](
 ) -> None:
     try:
         _exec(provider, request, ("mkdir", "-p", remote_source_dir))
-        _exec(provider, request, ("tar", "-xf", remote_archive, "-C", remote_source_dir))
+        _exec(
+            provider, request, ("tar", "-xf", remote_archive, "-C", remote_source_dir)
+        )
     except BaseException as error:
         best_effort(
             error,
@@ -84,6 +102,14 @@ def source_archive_resource[RequestT](
     provider: RemoteProvider[RequestT],
     request: RequestT,
 ) -> Resource[str]:
+    """Package ``commit`` locally and unpack it on the remote host.
+
+    The commit is exported with ``git archive``, transferred, verified against
+    its local SHA-256, and extracted into ``remote_source_dir``. Acquiring
+    returns ``remote_source_dir``; releasing best-effort deletes that extracted
+    directory on the remote host.
+    """
+
     def acquire(_inputs: TaskInputs) -> str:
         with tempfile.TemporaryDirectory() as tmp:
             archive_path = Path(tmp) / "source.tar"
@@ -106,15 +132,17 @@ def source_archive_resource[RequestT](
             _exec(provider, request, ("mkdir", "-p", str(Path(remote_archive).parent)))
             _transfer_archive(provider, request, archive_path, remote_archive)
             _verify_remote_archive(provider, request, remote_archive, checksum)
-            _extract_remote_archive(provider, request, remote_archive, remote_source_dir)
+            _extract_remote_archive(
+                provider, request, remote_archive, remote_source_dir
+            )
         return remote_source_dir
 
     def release(_inputs: TaskInputs, _state: str) -> None:
-        try:
+        with contextlib.suppress(RuntimeError):
             provider.exec_argv(request, argv=("rm", "-rf", remote_source_dir))
-        except RuntimeError:
-            pass
 
     return Resource(
-        title=f"Acquire source archive at {remote_source_dir}", acquire=acquire, release=release
+        title=f"Acquire source archive at {remote_source_dir}",
+        acquire=acquire,
+        release=release,
     )

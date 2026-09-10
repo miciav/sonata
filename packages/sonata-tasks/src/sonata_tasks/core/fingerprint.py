@@ -1,3 +1,5 @@
+"""Deterministic fingerprints of task configuration."""
+
 from __future__ import annotations
 
 import hashlib
@@ -32,6 +34,14 @@ def _canonical(value: object) -> object:
 
 
 def fingerprint_digest(payload: Mapping[str, Any]) -> str:
+    """Return a ``sha256:`` digest of ``payload`` under a canonical encoding.
+
+    Nested mappings are key-sorted, sets are put in a deterministic order, and
+    paths and bytes are normalised, so payloads that are equal as
+    configuration hash identically. Values the payload cannot represent
+    faithfully — non-finite floats, non-string mapping keys, unknown types —
+    raise ``ValueError`` or ``TypeError`` instead of hashing ambiguously.
+    """
     encoded = json.dumps(
         _canonical(payload),
         ensure_ascii=True,

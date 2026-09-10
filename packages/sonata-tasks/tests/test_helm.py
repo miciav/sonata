@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import pytest
+from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.helm import (
     HelmInstallTask,
     HelmReleaseSpec,
@@ -10,8 +12,6 @@ from sonata_tasks.helm import (
     helm_release_resource,
 )
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import Resource, TaskInputs
 
 
 @dataclass
@@ -88,7 +88,9 @@ def test_release_uninstalls_the_acquired_release(spec: HelmReleaseSpec) -> None:
 
 
 def test_resource_requires_its_vm_and_is_retained(spec: HelmReleaseSpec) -> None:
-    vm = Resource(title="Acquire VM", acquire=lambda _inputs: None, release=lambda *_: None)
+    vm = Resource(
+        title="Acquire VM", acquire=lambda _inputs: None, release=lambda *_: None
+    )
 
     resource = helm_release_resource(spec, executor=RecordingExecutor(), requires=(vm,))
 
@@ -97,8 +99,12 @@ def test_resource_requires_its_vm_and_is_retained(spec: HelmReleaseSpec) -> None
     assert resource.always_release is False
 
 
-def test_failed_acquire_best_effort_uninstalls_before_reraising(spec: HelmReleaseSpec) -> None:
-    failure = TaskResult(task_id="", status="failed", return_code=1, stderr="install failed")
+def test_failed_acquire_best_effort_uninstalls_before_reraising(
+    spec: HelmReleaseSpec,
+) -> None:
+    failure = TaskResult(
+        task_id="", status="failed", return_code=1, stderr="install failed"
+    )
     executor = RecordingExecutor(results=[failure])
     resource = helm_release_resource(spec, executor=executor)
 
@@ -108,8 +114,12 @@ def test_failed_acquire_best_effort_uninstalls_before_reraising(spec: HelmReleas
     assert executor.seen[1].argv[:3] == ("helm", "uninstall", "example-service")
 
 
-def test_failed_cleanup_is_noted_without_masking_acquire_failure(spec: HelmReleaseSpec) -> None:
-    failure = TaskResult(task_id="", status="failed", return_code=1, stderr="install failed")
+def test_failed_cleanup_is_noted_without_masking_acquire_failure(
+    spec: HelmReleaseSpec,
+) -> None:
+    failure = TaskResult(
+        task_id="", status="failed", return_code=1, stderr="install failed"
+    )
     cleanup_failure = TaskResult(
         task_id="", status="failed", return_code=1, stderr="uninstall failed"
     )
@@ -123,15 +133,23 @@ def test_failed_cleanup_is_noted_without_masking_acquire_failure(spec: HelmRelea
 
 
 def test_install_task_is_usable_on_its_own(spec: HelmReleaseSpec) -> None:
-    """A workflow whose goal is to put the platform up wants the task, not the
-    resource: Sonata never acquires a resource nothing consumes."""
+    """Use the install task alone, without acquiring the release resource.
+
+    A workflow whose goal is to put the platform up wants the task, not the
+    resource: Sonata never acquires a resource nothing consumes.
+    """
     executor = RecordingExecutor()
 
     task = HelmInstallTask(spec, executor=executor, role="stack")
     _ = task.run(TaskInputs.empty())
 
     assert task.title == "Install Helm release example-service"
-    assert executor.seen[0].argv[:4] == ("helm", "upgrade", "--install", "example-service")
+    assert executor.seen[0].argv[:4] == (
+        "helm",
+        "upgrade",
+        "--install",
+        "example-service",
+    )
     assert executor.seen[0].execution_role == "stack"
 
 
@@ -146,7 +164,9 @@ def test_uninstall_task_is_usable_on_its_own(spec: HelmReleaseSpec) -> None:
     assert "--ignore-not-found" in executor.seen[0].argv
 
 
-def test_the_resource_runs_the_very_same_commands_as_the_tasks(spec: HelmReleaseSpec) -> None:
+def test_the_resource_runs_the_very_same_commands_as_the_tasks(
+    spec: HelmReleaseSpec,
+) -> None:
     """The resource composes the tasks; it must not carry a second copy of the argv."""
     from_resource = RecordingExecutor()
     from_tasks = RecordingExecutor()
@@ -158,4 +178,6 @@ def test_the_resource_runs_the_very_same_commands_as_the_tasks(spec: HelmRelease
     _ = HelmInstallTask(spec, executor=from_tasks).run(TaskInputs.empty())
     _ = HelmUninstallTask(spec, executor=from_tasks).run(TaskInputs.empty())
 
-    assert [spec.argv for spec in from_resource.seen] == [spec.argv for spec in from_tasks.seen]
+    assert [spec.argv for spec in from_resource.seen] == [
+        spec.argv for spec in from_tasks.seen
+    ]

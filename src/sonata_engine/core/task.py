@@ -1,3 +1,5 @@
+"""The base classes every unit of work in a workflow derives from."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -20,10 +22,15 @@ class Task[T](ABC):
 
     @abstractmethod
     def run(self, inputs: TaskInputs) -> TaskOutcome[T]:
+        """Carry out this task and return its outcome.
+
+        The runner calls this once per attempt with the inputs it built for the
+        task. A subclass must return a `TaskOutcome`, not a bare value.
+        """
         raise NotImplementedError
 
     def _fingerprint_payload(self) -> object:
-        """What this task contributes to the workflow's resume fingerprint.
+        """Return this task's contribution to the workflow's resume fingerprint.
 
         `None` for a task whose identity is fully described by its class and
         position. A task that owns children returns something covering them, so
@@ -46,6 +53,11 @@ class ReusableTask(Task[None], ABC):
     @property
     @abstractmethod
     def reuse_key(self) -> str:
+        """Return a key that changes whenever reusable output would change.
+
+        Resume compares it against the journal, so it must cover every input
+        that affects what the task produces.
+        """
         raise NotImplementedError
 
     @override

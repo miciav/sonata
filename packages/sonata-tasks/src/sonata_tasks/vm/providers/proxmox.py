@@ -1,5 +1,8 @@
+"""Proxmox VM provider: lifecycle, NAT port publishing, and file transfer."""
+
 from __future__ import annotations
 
+import contextlib
 import shlex
 import socket
 import subprocess
@@ -63,7 +66,20 @@ def _parse_disk_gb(disk: str) -> int:
 
 
 class ProxmoxVmProvider:
-    def __init__(self, repo_root: Path, *, remote_project_name: str | None = None) -> None:
+    """Drive Proxmox VMs, their SSH NAT mappings, and file transfer.
+
+    VMs are reachable only through the Proxmox host's published ports, so the
+    provider reconciles a NAT rule for each service before connecting.
+    """
+
+    def __init__(
+        self, repo_root: Path, *, remote_project_name: str | None = None
+    ) -> None:
+        """Store the repository root and the optional remote project name.
+
+        ``_ssh_endpoints`` records the host and port published for each VM
+        whose SSH mapping has been resolved.
+        """
         self.repo_root = Path(repo_root)
         self._remote_project_name = remote_project_name
         self._ssh_endpoints: dict[str, tuple[str, int]] = {}
@@ -108,9 +124,13 @@ class ProxmoxVmProvider:
         ssh_key = self._ssh_key(request)
         if ssh_key:
             return ProxmoxRoutingManager.from_key(host, ssh_user, str(ssh_key))
-        return ProxmoxRoutingManager.from_password(host, ssh_user, request.proxmox_password or "")
+        return ProxmoxRoutingManager.from_password(
+            host, ssh_user, request.proxmox_password or ""
+        )
 
-    def _publish_ssh(self, request: VmRequest, *, vm: _ProxmoxVm, guest_ip: str) -> PortMapping:
+    def _publish_ssh(
+        self, request: VmRequest, *, vm: _ProxmoxVm, guest_ip: str
+    ) -> PortMapping:
         mapping = PortMapping(
             vm_id=int(vm.vm_id),
             vm_name=self._vm_name(request),
@@ -120,7 +140,9 @@ class ProxmoxVmProvider:
         )
         [published] = self._routing_manager(request).add_rules([mapping])
         if published.host_port is None:
-            raise RuntimeError(f"Proxmox SSH NAT rule for {mapping.vm_name} has no host port")
+            raise RuntimeError(
+                f"Proxmox SSH NAT rule for {mapping.vm_name} has no host port"
+            )
         return published
 
     def _published_rule_or_none(
@@ -142,7 +164,9 @@ class ProxmoxVmProvider:
         if rule is None:
             raise RuntimeError(f"Missing Proxmox NAT rule for {name} service {service}")
         if rule.host_port is None:
-            raise RuntimeError(f"Proxmox NAT rule for {name} service {service} has no host port")
+            raise RuntimeError(
+                f"Proxmox NAT rule for {name} service {service} has no host port"
+            )
         return rule
 
     def _reconcile_published_rule(
@@ -173,7 +197,9 @@ class ProxmoxVmProvider:
         )
         [published] = self._routing_manager(request).add_rules([mapping])
         if published.host_port is None:
-            raise RuntimeError(f"Proxmox NAT rule for {name} service {service} has no host port")
+            raise RuntimeError(
+                f"Proxmox NAT rule for {name} service {service} has no host port"
+            )
         return published
 
     def _ssh_endpoint(self, request: VmRequest) -> tuple[str, int]:
@@ -205,7 +231,10 @@ class ProxmoxVmProvider:
         else:
             host_port = rule.host_port if rule.host_port is not None else "<none>"
             rule_text = f"SSH={host_port}->{rule.vm_ip}:{rule.vm_port}"
-        return f"Proxmox NAT diagnostic: vm={name} vm_id={vm_id} guest_ip={guest_ip} {rule_text}"
+        return (
+            f"Proxmox NAT diagnostic: vm={name} vm_id={vm_id} "
+            f"guest_ip={guest_ip} {rule_text}"
+        )
 
     def _append_ssh_nat_diagnostic(self, request: VmRequest, stderr: str) -> str:
         diagnostic = self._ssh_nat_diagnostic(request)
@@ -221,7 +250,9 @@ class ProxmoxVmProvider:
                     return
             except OSError:
                 time.sleep(2.0)
-        raise RuntimeError(f"SSH at {host}:{port} did not become reachable within {timeout:.0f}s")
+        raise RuntimeError(
+            f"SSH at {host}:{port} did not become reachable within {timeout:.0f}s"
+        )
 
     def _wait_for_cloud_init(
         self,
@@ -253,51 +284,89 @@ class ProxmoxVmProvider:
                 "if command -v cloud-init >/dev/null 2>&1; then cloud-init status; "
                 "else echo 'status: done'; fi",
             ]
-            try:
+            # Broad on purpose: the cloud-init run is polled over SSH while the
+            # VM reboots, so a transport error here just means "not finished
+            # yet" - it is the loop deadline above that ends the wait.
+            with contextlib.suppress(Exception):
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 output = result.stdout.strip()
                 if "status: done" in output or "status: error" in output:
                     return
                 # "status: running" — keep polling
-            except Exception:
-                pass  # SSH temporarily down (cloud-init reboot in progress)
             time.sleep(5.0)
 
     def ssh_endpoint(self, request: VmRequest) -> tuple[str, int]:
+        """Return the ``(host, port)`` published for SSH to the VM.
+
+        The NAT rule is reconciled against the VM's current id and IP first, so
+        a recreated VM gets a fresh mapping before the endpoint is returned.
+        """
         return self._ssh_endpoint(request)
 
     def wait_for_ssh(self, request: VmRequest, *, timeout: float = 120.0) -> None:
+        """Block until the VM's published SSH endpoint accepts connections.
+
+        Raises RuntimeError if it stays unreachable for ``timeout`` seconds.
+        """
         host, port = self._ssh_endpoint(request)
         self._wait_for_ssh(host, port, timeout=timeout)
 
     def ssh_private_key_path(self, request: VmRequest) -> Path | None:
+        """Return the private key used to reach the VM, or None if none found."""
         return self._ssh_key(request)
 
     def remote_home(self, request: VmRequest) -> str:
+        """Return the remote user's home directory for the request."""
         return vm_remote_home(request)
 
     def remote_project_dir(self, request: VmRequest) -> str:
+        """Return the project directory under the remote home.
+
+        Raises ValueError when no remote project name was configured.
+        """
         if not self._remote_project_name:
             raise ValueError("remote_project_name is required for remote_project_dir")
         return f"{self.remote_home(request)}/{self._remote_project_name}"
 
-    def publish_port(self, request: VmRequest, *, service: str, guest_port: int) -> tuple[str, int]:
-        rule = self._reconcile_published_rule(request, service=service, guest_port=guest_port)
+    def publish_port(
+        self, request: VmRequest, *, service: str, guest_port: int
+    ) -> tuple[str, int]:
+        """Publish a guest port through Proxmox NAT and return its endpoint.
+
+        Returns the Proxmox host and the mapped host port. An existing rule
+        already pointing at the VM's current id, IP, and guest port is reused;
+        otherwise a new one is added. Raises RuntimeError if the resulting rule
+        has no host port.
+        """
+        rule = self._reconcile_published_rule(
+            request, service=service, guest_port=guest_port
+        )
         return request.proxmox_host or "", int(cast(int, rule.host_port))
 
-    def published_endpoint(self, request: VmRequest, *, service: str) -> tuple[str, int]:
+    def published_endpoint(
+        self, request: VmRequest, *, service: str
+    ) -> tuple[str, int]:
+        """Return the endpoint already published for ``service``.
+
+        Unlike ``publish_port`` this never creates a rule; it raises
+        RuntimeError when no matching rule exists or it has no host port.
+        """
         rule = self._published_rule(request, service)
         return request.proxmox_host or "", int(cast(int, rule.host_port))
 
     def guest_host(self, request: VmRequest) -> str:
+        """Return the VM's guest IP, the address it is reached at on the LAN."""
         return self.connection_host(request)
 
     def connection_host(self, request: VmRequest) -> str:
+        """Return the VM's guest IP address as reported by Proxmox."""
         client = self._client(request)
         vm = client.get_vm(self._vm_name(request))
         return vm.wait_for_ip()
 
-    def _wait_for_vm_ready(self, vm: _ProxmoxVm, *, total_timeout: float = 600.0) -> None:
+    def _wait_for_vm_ready(
+        self, vm: _ProxmoxVm, *, total_timeout: float = 600.0
+    ) -> None:
         deadline = time.monotonic() + total_timeout
         last_exc: Exception = RuntimeError("wait_ready never attempted")
         while time.monotonic() < deadline:
@@ -323,6 +392,12 @@ class ProxmoxVmProvider:
         raise last_exc
 
     def ensure_running(self, request: VmRequest) -> ShellExecutionResult:
+        """Create or start the VM and wait until it is ready to SSH into.
+
+        Waits for the VM agent, its IP address, the published SSH mapping, and
+        cloud-init to finish, re-probing SSH at the end because cloud-init may
+        have rebooted the guest. Returns a successful result naming the VM.
+        """
         client = self._client(request)
         name = self._vm_name(request)
         cores = request.cpus or 2
@@ -350,16 +425,22 @@ class ProxmoxVmProvider:
         return successful_result(["proxmox", "ensure_running", name])
 
     def teardown(self, request: VmRequest) -> ShellExecutionResult:
+        """Stop and delete the VM and remove its NAT rules.
+
+        A VM that is already gone counts as success, and routing-cleanup
+        failures are ignored; a failure deleting the VM itself is re-raised
+        after cleanup has run. Returns a successful result otherwise.
+        """
         client = self._client(request)
         name = self._vm_name(request)
         delete_error: Exception | None = None
         try:
             vm = client.get_vm(name)
-            try:
+            # Stopping first is best effort: the delete below is what the caller
+            # asked for, and a VM that is already stopped fails this call.
+            with contextlib.suppress(Exception):
                 if vm.info().state.value == "running":
                     vm.stop()
-            except Exception:
-                pass
             try:
                 vm.delete()
             except VmNotFoundError:
@@ -370,13 +451,13 @@ class ProxmoxVmProvider:
             pass
         except Exception as exc:
             delete_error = exc
-        try:
+        # Same for the NAT rules: a leftover mapping is worth reporting, but not
+        # worth failing a delete that already succeeded.
+        with contextlib.suppress(Exception):
             mgr = self._routing_manager(request)
             rules = [r for r in mgr.list_rules() if r.vm_name == name]
             if rules:
                 mgr.remove_rules(rules)
-        except Exception:
-            pass
         if delete_error is not None:
             raise delete_error
         return successful_result(["proxmox", "delete", name])
@@ -390,6 +471,12 @@ class ProxmoxVmProvider:
         remote_dir: str | None = None,
         dry_run: bool = False,
     ) -> ShellExecutionResult:
+        """Run ``argv`` on the VM over SSH and return the command's result.
+
+        ``remote_dir`` and ``env`` are applied on the guest before the command
+        runs, and a non-zero exit has a NAT diagnostic appended to stderr.
+        ``dry_run`` is accepted for interface compatibility and has no effect.
+        """
         del dry_run
         host, port = self._ssh_endpoint(request)
         ssh_key = self._ssh_key(request)
@@ -426,6 +513,11 @@ class ProxmoxVmProvider:
         source: Path,
         destination: str,
     ) -> ShellExecutionResult:
+        """Copy a local file to the VM over the published port.
+
+        The transfer runs over scp, and a non-zero exit has a NAT diagnostic
+        appended to stderr before the result is returned.
+        """
         host, port = self._ssh_endpoint(request)
         ssh_key = self._ssh_key(request)
         user = request.user or "ubuntu"
@@ -451,6 +543,11 @@ class ProxmoxVmProvider:
         source: str,
         destination: Path,
     ) -> ShellExecutionResult:
+        """Copy a remote file from the VM to a local path over the published port.
+
+        The transfer runs over scp, and a non-zero exit has a NAT diagnostic
+        appended to stderr before the result is returned.
+        """
         host, port = self._ssh_endpoint(request)
         ssh_key = self._ssh_key(request)
         user = request.user or "ubuntu"

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+
 from sonata_tasks.vm.models import VmRequest
 from sonata_tasks.vm.providers.multipass import (
     MultipassVmProvider,
@@ -66,7 +67,9 @@ def test_resolve_connection_host_external_no_host_raises() -> None:
     # Use a mock to simulate missing host
     with pytest.raises(ValidationError):
         resolve_connection_host(
-            VmRequest.model_validate({**req_dict, "lifecycle": "external", "host": None}),
+            VmRequest.model_validate(
+                {**req_dict, "lifecycle": "external", "host": None}
+            ),
             client,
         )
 
@@ -121,23 +124,25 @@ def test_resolve_multipass_ipv4_dry_run() -> None:
 
 
 def test_ensure_running_multipass_dry_run() -> None:
-    provider, shell, _ = _make_provider()
+    provider, _shell, _ = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
     result = provider.ensure_running(req, dry_run=True)
     assert result.return_code == 0
 
 
 def test_ensure_running_multipass_calls_client() -> None:
-    provider, shell, client = _make_provider()
+    provider, _shell, client = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
-    # ensure_running with ssh_public_key=None so _ensure_multipass_authorized_key is a no-op
+    # ssh_public_key=None makes _ensure_multipass_authorized_key a no-op
     provider._ssh_public_key = None
     provider.ensure_running(req, dry_run=False)
     client.ensure_running.assert_called_once()
 
 
 def test_ensure_running_with_ssh_key_relies_on_cloud_init() -> None:
-    provider, shell, client = _make_provider(ssh_public_key="ssh-ed25519 AAAA test@host")
+    provider, _shell, client = _make_provider(
+        ssh_public_key="ssh-ed25519 AAAA test@host"
+    )
     req = VmRequest(lifecycle="multipass", name="my-vm")
     provider.ensure_running(req, dry_run=False)
     client.ensure_running.assert_called_once()
@@ -148,7 +153,9 @@ def test_ensure_running_with_ssh_key_relies_on_cloud_init() -> None:
 
 
 def test_ensure_running_with_ssh_key_root_user_does_not_exec() -> None:
-    provider, shell, client = _make_provider(ssh_public_key="ssh-ed25519 AAAA test@host")
+    provider, _shell, client = _make_provider(
+        ssh_public_key="ssh-ed25519 AAAA test@host"
+    )
     req = VmRequest(lifecycle="multipass", name="my-vm", user="root")
     provider.ensure_running(req, dry_run=False)
     client.ensure_running.assert_called_once()
@@ -165,7 +172,7 @@ def test_teardown_external_lifecycle() -> None:
 
 
 def test_teardown_multipass_calls_delete() -> None:
-    provider, shell, client = _make_provider()
+    provider, _shell, client = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
     result = provider.teardown(req, dry_run=False)
     client.get_vm.return_value.delete.assert_called_once()
@@ -175,7 +182,7 @@ def test_teardown_multipass_calls_delete() -> None:
 def test_teardown_multipass_command_error() -> None:
     from multipass import MultipassCommandError
 
-    provider, shell, client = _make_provider()
+    provider, _shell, client = _make_provider()
     err = MultipassCommandError(
         ["multipass", "delete", "my-vm"], returncode=1, stdout="", stderr="error"
     )
@@ -188,7 +195,7 @@ def test_teardown_multipass_command_error() -> None:
 def test_teardown_multipass_vm_not_found() -> None:
     from multipass import VmNotFoundError
 
-    provider, shell, client = _make_provider()
+    provider, _shell, client = _make_provider()
     client.get_vm.return_value.delete.side_effect = VmNotFoundError("gone")
     req = VmRequest(lifecycle="multipass", name="gone-vm")
     result = provider.teardown(req, dry_run=False)
@@ -204,14 +211,14 @@ def test_inspect_external() -> None:
 
 
 def test_inspect_dry_run() -> None:
-    provider, shell, _ = _make_provider()
+    provider, _shell, _ = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
     result = provider.inspect(req, dry_run=True)
     assert result.return_code == 0
 
 
 def test_inspect_multipass_success() -> None:
-    provider, shell, client = _make_provider()
+    provider, _shell, client = _make_provider()
     info = MagicMock()
     info.name = "my-vm"
     info.state.value = "Running"
@@ -226,7 +233,7 @@ def test_inspect_multipass_success() -> None:
 def test_inspect_multipass_command_error() -> None:
     from multipass import MultipassCommandError
 
-    provider, shell, client = _make_provider()
+    provider, _shell, client = _make_provider()
     err = MultipassCommandError(
         ["multipass", "info", "my-vm"], returncode=1, stdout="", stderr="error"
     )
@@ -237,15 +244,17 @@ def test_inspect_multipass_command_error() -> None:
 
 
 def test_exec_argv_multipass() -> None:
-    provider, shell, client = _make_provider()
-    shell.run.return_value = MagicMock(return_code=0, stdout="ok", stderr="", command=[])
+    provider, shell, _client = _make_provider()
+    shell.run.return_value = MagicMock(
+        return_code=0, stdout="ok", stderr="", command=[]
+    )
     req = VmRequest(lifecycle="multipass", name="my-vm")
     provider.exec_argv(req, ["echo", "hello"], env={"K": "V"}, remote_dir="/home")
     shell.run.assert_called_once()
 
 
 def test_exec_argv_with_env_and_cwd() -> None:
-    provider, shell, client = _make_provider()
+    provider, shell, _client = _make_provider()
     shell.run.return_value = MagicMock(return_code=0, stdout="", stderr="", command=[])
     req = VmRequest(lifecycle="multipass", name="my-vm")
     provider.exec_argv(req, ("ls", "-la"), env={"PATH": "/usr/bin"}, remote_dir="/tmp")
@@ -263,7 +272,7 @@ def test_remote_exec_external() -> None:
 
 
 def test_remote_exec_multipass_dry_run() -> None:
-    provider, shell, _ = _make_provider()
+    provider, _shell, _ = _make_provider()
     req = VmRequest(lifecycle="multipass", name="my-vm")
     result = provider.remote_exec(req, command="echo hi", dry_run=True)
     assert result.return_code == 0

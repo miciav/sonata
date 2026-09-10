@@ -64,7 +64,9 @@ def _records(path: Path) -> list[dict]:
     """Task records only -- retention records carry no task_id."""
     return [
         record
-        for record in (json.loads(line) for line in path.read_text().splitlines() if line.strip())
+        for record in (
+            json.loads(line) for line in path.read_text().splitlines() if line.strip()
+        )
         if record.get("kind") != "retained"
     ]
 
@@ -117,7 +119,9 @@ def test_unreachable_task_remains_in_journal_topology(tmp_path: Path) -> None:
         workflow.run(journal=config)
 
     unreachable = [
-        record for record in _records(config.path) if record["task_id"] == "003.unreachable"
+        record
+        for record in _records(config.path)
+        if record["task_id"] == "003.unreachable"
     ]
     assert [record["status"] for record in unreachable] == ["pending"]
 
@@ -172,10 +176,13 @@ def test_changed_ordered_topology_rejects_existing_journal(tmp_path: Path) -> No
 
 
 def test_changed_topology_does_not_reject_a_non_resuming_run(tmp_path: Path) -> None:
-    """Fingerprint mismatch only matters for `resume=True` -- it exists to stop resume
-    from reusing evidence under a stale task ID. A fresh (non-resuming) run pointed at
-    a journal file left over from a differently-shaped workflow must not be blocked;
-    mismatched records are simply ignored, the same as a `workflow_id` mismatch."""
+    """Block a topology mismatch only when the run resumes.
+
+    The check exists to stop resume from reusing evidence under a stale task ID.
+    A fresh (non-resuming) run pointed at a journal file left over from a
+    differently-shaped workflow must not be blocked; mismatched records are
+    simply ignored, the same as a `workflow_id` mismatch.
+    """
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     original = Workflow(workflow_id="wf")
     original.add(_Ok("Build"))
@@ -221,7 +228,7 @@ def test_five_tasks_produce_five_logical_entries(tmp_path: Path) -> None:
     workflow = _five_task_workflow()
     config = JournalConfig(path=tmp_path / "journal.jsonl")
 
-    workflow.run( journal=config)
+    workflow.run(journal=config)
 
     records = _records(config.path)
     assert len({r["task_id"] for r in records}) == 5
@@ -237,8 +244,8 @@ def test_retries_add_attempts_without_new_logical_task(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
 
     # Ordinary (non-reusable) tasks: a passed task runs again on the next run.
-    workflow.run( journal=config)
-    workflow.run( journal=config)
+    workflow.run(journal=config)
+    workflow.run(journal=config)
 
     records = _records(config.path)
     assert len({r["task_id"] for r in records}) == 5  # still five logical tasks
@@ -261,7 +268,7 @@ def test_records_started_then_passed(tmp_path: Path) -> None:
     workflow.add(_Ok("Build"))
     config = JournalConfig(path=tmp_path / "journal.jsonl")
 
-    workflow.run( journal=config)
+    workflow.run(journal=config)
 
     records = _records(config.path)
     assert [r["status"] for r in records] == ["pending", "started", "passed"]
@@ -277,7 +284,7 @@ def test_records_started_then_failed(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
 
     with pytest.raises(RuntimeError, match="boom"):
-        workflow.run( journal=config)
+        workflow.run(journal=config)
 
     records = _records(config.path)
     assert [r["status"] for r in records] == ["pending", "started", "failed"]
@@ -293,7 +300,7 @@ def test_records_finalizer_outcomes(tmp_path: Path) -> None:
     workflow.add(_Ok("Use"), requires=(resource,))
     config = JournalConfig(path=tmp_path / "journal.jsonl")
 
-    workflow.run( journal=config)
+    workflow.run(journal=config)
 
     records = _records(config.path)
     ids = {r["task_id"] for r in records}
@@ -320,7 +327,7 @@ def test_started_record_is_durable_before_task_body_runs(tmp_path: Path) -> None
 
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Peek())
-    workflow.run( journal=config)
+    workflow.run(journal=config)
 
     assert [r["status"] for r in seen["records"]] == ["pending", "started"]
 
@@ -335,7 +342,7 @@ def test_release_failure_records_failed_outcome(tmp_path: Path) -> None:
     config = JournalConfig(path=tmp_path / "journal.jsonl")
 
     with pytest.raises(RuntimeError, match="Cleanup failed"):
-        workflow.run( journal=config)
+        workflow.run(journal=config)
 
     records = _records(config.path)
     release_records = [r for r in records if r["task_id"].endswith("release-db")]
@@ -347,14 +354,14 @@ def test_load_skips_blank_lines(tmp_path: Path) -> None:
     workflow = Workflow(workflow_id="wf")
     workflow.add(_Ok("Build"))
     config = JournalConfig(path=path)
-    workflow.run( journal=config)
+    workflow.run(journal=config)
 
-    with open(path, "a", encoding="utf-8") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         handle.write("\n")  # blank line between attempts, must not break parsing
 
     # A fresh Journal (via a second run) re-reads the file including the
     # blank line; a second, ordinary (non-reusable) task run must still succeed.
-    workflow.run( journal=config)
+    workflow.run(journal=config)
     records = _records(path)
     assert max(r["attempt"] for r in records) == 2
 
@@ -366,7 +373,7 @@ def test_load_ignores_only_an_incomplete_final_json_line(tmp_path: Path) -> None
     workflow.add(_Ok("Build"))
     workflow.run(journal=config)
 
-    with open(path, "a", encoding="utf-8") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         handle.write(f'{{"schema_version":{SCHEMA_VERSION},"workflow_id":"wf"')
 
     workflow.run(journal=config)
@@ -415,7 +422,7 @@ def test_load_rejects_evidence_with_invalid_field_types(
     evidence[field] = invalid_value
     malformed["attempt"] = 2
     malformed["evidence"] = [evidence]
-    with open(path, "a", encoding="utf-8") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(malformed) + "\n")
 
     with pytest.raises(CorruptJournalError):
@@ -423,22 +430,26 @@ def test_load_rejects_evidence_with_invalid_field_types(
 
 
 def test_load_filters_records_by_workflow_id(tmp_path: Path) -> None:
-    """A `passed`+verified-evidence record from a DIFFERENT workflow sharing the same
-    journal file must never cause an incorrect skip -- that's the actual danger the
-    `workflow_id` filter in `_load()` protects against (an ordinary, non-reusable task
-    always reruns regardless, so the scenario needs a reusable task to be meaningful)."""
+    """Never skip on evidence recorded by a different workflow sharing the file.
+
+    That is the actual danger the `workflow_id` filter in `_load()` protects
+    against: a `passed` record with verified evidence from a DIFFERENT workflow
+    in the same journal file must not cause an incorrect skip (an ordinary,
+    non-reusable task always reruns regardless, so the scenario needs a reusable
+    task to be meaningful).
+    """
     path = tmp_path / "journal.jsonl"
     config = JournalConfig(path=path)
     evidence = (Evidence("exact-value", "v1"),)
 
     other = Workflow(workflow_id="other-workflow")
     other.add(_ReusableOk("Build", evidence=evidence))
-    other.run( journal=config)  # records "001.build" passed
+    other.run(journal=config)  # records "001.build" passed
 
     task = _ReusableOk("Build", evidence=evidence)
     workflow = Workflow(workflow_id="wf")
     workflow.add(task)
-    workflow.run( journal=config, resume=True)
+    workflow.run(journal=config, resume=True)
 
     assert task.ran is True  # not skipped based on the other workflow's evidence
 
@@ -478,8 +489,11 @@ def _retained_records(path: Path) -> list[dict]:
 
 
 def test_a_retained_resource_records_its_acquired_value(tmp_path: Path) -> None:
-    """A later process has no _RunState, so the value release() needs must be in
-    the journal or the resource can never be released again."""
+    """Journal the acquired value so a later process can release the resource.
+
+    A later process has no _RunState, so the value release() needs must be in
+    the journal or the resource can never be released again.
+    """
     calls, path = _kept(tmp_path, {"name": "stack", "host": "10.0.0.1"})
 
     assert calls == []
@@ -489,7 +503,9 @@ def test_a_retained_resource_records_its_acquired_value(tmp_path: Path) -> None:
     assert records[0]["value"] == {"name": "stack", "host": "10.0.0.1"}
 
 
-def test_an_always_release_resource_is_never_recorded_as_retained(tmp_path: Path) -> None:
+def test_an_always_release_resource_is_never_recorded_as_retained(
+    tmp_path: Path,
+) -> None:
     calls, path = _kept(tmp_path, {"token": "secret"}, always_release=True)
 
     assert calls == ["release:{'token': 'secret'}"]
@@ -499,9 +515,12 @@ def test_an_always_release_resource_is_never_recorded_as_retained(tmp_path: Path
 def test_an_unjournalable_value_is_released_rather_than_silently_stranded(
     tmp_path: Path,
 ) -> None:
-    """Retention is a promise that a later teardown can finish the job. When the
+    """Release a value that cannot be journaled rather than strand it.
+
+    Retention is a promise that a later teardown can finish the job. When the
     value cannot be written down that promise cannot be kept, so releasing now is
-    the only outcome that leaves nothing unmanaged."""
+    the only outcome that leaves nothing unmanaged.
+    """
     calls, path = _kept(tmp_path, object())
 
     assert len(calls) == 1

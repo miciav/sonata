@@ -33,9 +33,8 @@ def test_workflow_log_emits_log_line() -> None:
 
 def test_status_delegates_to_sink_status() -> None:
     sink = _FakeSink()
-    with bind_workflow_sink(sink):
-        with status("loading"):
-            pass
+    with bind_workflow_sink(sink), status("loading"):
+        pass
     assert sink.status_labels == ["loading"]
 
 
@@ -59,9 +58,11 @@ def test_task_lifecycle_helpers_are_not_public() -> None:
 
 def test_subtask_emits_started_and_passed() -> None:
     sink = _FakeSink()
-    with bind_workflow_sink(sink):
-        with subtask(task_id="build-images/cp", title="Build control plane"):
-            pass
+    with (
+        bind_workflow_sink(sink),
+        subtask(task_id="build-images/cp", title="Build control plane"),
+    ):
+        pass
 
     assert [event.kind for event in sink.events] == ["task.started", "task.passed"]
     assert sink.events[0].task_id == "build-images/cp"
@@ -69,24 +70,31 @@ def test_subtask_emits_started_and_passed() -> None:
 
 
 def test_subtask_nests_under_the_task_that_is_running() -> None:
-    """The parent is read from the bound context, not passed in: a task does not
-    know the id the compiler gave it."""
+    """Take the parent id from the bound context rather than from the caller.
+
+    A task does not know the id the compiler gave it, so the id it nests under
+    has to come from whatever context is currently bound around it.
+    """
     sink = _FakeSink()
-    with bind_workflow_sink(sink):
-        with bind_workflow_context(WorkflowContext(task_id="003.build-images")):
-            with subtask(task_id="build-images/cp", title="cp"):
-                pass
+    with (
+        bind_workflow_sink(sink),
+        bind_workflow_context(WorkflowContext(task_id="003.build-images")),
+        subtask(task_id="build-images/cp", title="cp"),
+    ):
+        pass
 
     assert {event.parent_task_id for event in sink.events} == {"003.build-images"}
 
 
 def test_subtasks_nest_to_whatever_depth_the_call_stack_produces() -> None:
     sink = _FakeSink()
-    with bind_workflow_sink(sink):
-        with bind_workflow_context(WorkflowContext(task_id="001.outer")):
-            with subtask(task_id="outer/mid", title="mid"):
-                with subtask(task_id="outer/mid/inner", title="inner"):
-                    pass
+    with (
+        bind_workflow_sink(sink),
+        bind_workflow_context(WorkflowContext(task_id="001.outer")),
+        subtask(task_id="outer/mid", title="mid"),
+        subtask(task_id="outer/mid/inner", title="inner"),
+    ):
+        pass
 
     parents = {event.task_id: event.parent_task_id for event in sink.events}
     assert parents["outer/mid"] == "001.outer"
@@ -96,10 +104,12 @@ def test_subtasks_nest_to_whatever_depth_the_call_stack_produces() -> None:
 def test_a_failing_subtask_reports_and_still_propagates() -> None:
     """Reporting must not swallow the failure: the enclosing unit has to fail."""
     sink = _FakeSink()
-    with bind_workflow_sink(sink):
-        with pytest.raises(RuntimeError, match="image build failed"):
-            with subtask(task_id="build-images/cp", title="cp"):
-                raise RuntimeError("image build failed")
+    with (
+        bind_workflow_sink(sink),
+        pytest.raises(RuntimeError, match="image build failed"),
+        subtask(task_id="build-images/cp", title="cp"),
+    ):
+        raise RuntimeError("image build failed")
 
     assert [event.kind for event in sink.events] == ["task.started", "task.failed"]
     assert "image build failed" in sink.events[1].detail

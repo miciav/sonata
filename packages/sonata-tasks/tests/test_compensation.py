@@ -1,4 +1,5 @@
 import pytest
+
 from sonata_tasks.compensation import best_effort
 
 
@@ -22,4 +23,6 @@ def test_best_effort_notes_operational_cleanup_error_on_the_primary_error() -> N
         what="cleanup",
     )
 
-    assert error.__notes__ == ["Best-effort cleanup after a failed acquire failed: cleanup failed"]
+    assert error.__notes__ == [
+        "Best-effort cleanup after a failed acquire failed: cleanup failed"
+    ]

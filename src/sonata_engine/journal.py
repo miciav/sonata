@@ -3,9 +3,10 @@
 The journal records the lifecycle of a compiled workflow so an interrupted run can
 resume. Storage is one JSON object per line; a single logical task (`task_id`) can
 own several physical attempt records. Recovery truncates only a malformed,
-non-newline-terminated final record left by an interrupted append. Schema v2 stores only generic
-workflow/task/attempt/evidence data -- no release identity, semantic versions,
-registries, or artifact policy (those do not belong in Sonata).
+non-newline-terminated final record left by an interrupted append. Schema v2
+stores only generic workflow/task/attempt/evidence data -- no release identity,
+semantic versions, registries, or artifact policy (those do not belong in
+Sonata).
 """
 
 from __future__ import annotations
@@ -36,7 +37,9 @@ SCHEMA_VERSION = 3
 
 
 def _jsonable(value: object) -> object:
-    """A JSON view of an acquired resource value, or TypeError if there is none.
+    """Return a JSON-serializable view of an acquired resource value.
+
+    Raises `TypeError` when the value has no faithful JSON representation.
 
     Deliberately narrow. Dataclasses are the common shape for resource values (a
     VM's info, an endpoint pair) so they convert; everything else must already be
@@ -54,6 +57,7 @@ def _jsonable(value: object) -> object:
         return [_jsonable(item) for item in value]
     raise TypeError(f"resource value is not journalable: {type(value).__name__}")
 
+
 Verifier = Callable[[Evidence], bool]
 ResumeAction = Literal["run", "skip"]
 
@@ -62,7 +66,7 @@ ResumeAction = Literal["run", "skip"]
 
 
 def _verify_file_digest(evidence: Evidence) -> bool:
-    """`file-digest` evidence verifies iff the file at `reference` still hashes to `digest`."""
+    """Return whether `file-digest` evidence still matches the file at `reference`."""
     if evidence.digest is None:
         return False
     try:
@@ -86,7 +90,9 @@ def _resolve_verifiers(verifiers: Mapping[str, Verifier] | None) -> dict[str, Ve
     return resolved
 
 
-def _all_verified(evidence: tuple[Evidence, ...], verifiers: Mapping[str, Verifier]) -> bool:
+def _all_verified(
+    evidence: tuple[Evidence, ...], verifiers: Mapping[str, Verifier]
+) -> bool:
     """Every evidence entry must verify. Unknown `kind` (no verifier) fails closed."""
     if not evidence:
         return False
@@ -102,7 +108,11 @@ def _all_verified(evidence: tuple[Evidence, ...], verifiers: Mapping[str, Verifi
 
 @dataclass(frozen=True, slots=True)
 class TaskState:
-    """The latest recorded state of one logical task, folded from its attempt records."""
+    """The latest recorded state of one logical task.
+
+    Folded from that task's attempt records, so it carries the highest attempt
+    seen and the status and evidence that attempt ended with.
+    """
 
     task_id: str
     attempt: int
@@ -135,7 +145,8 @@ def decide_resume(
     if idempotent:
         return "run"
     raise AmbiguousTaskStateError(
-        f"{prior.task_id} is {prior.status!r} and non-idempotent; refusing automatic resume"
+        f"{prior.task_id} is {prior.status!r} and non-idempotent; "
+        "refusing automatic resume"
     )
 
 
@@ -154,7 +165,9 @@ def _utc_iso() -> str:
 
 
 def _evidence_to_json(evidence: tuple[Evidence, ...]) -> list[dict[str, str | None]]:
-    return [{"kind": e.kind, "reference": e.reference, "digest": e.digest} for e in evidence]
+    return [
+        {"kind": e.kind, "reference": e.reference, "digest": e.digest} for e in evidence
+    ]
 
 
 def _evidence_from_json(raw: object) -> tuple[Evidence, ...]:
@@ -205,6 +218,15 @@ class Journal:
         *,
         resume: bool = False,
     ) -> None:
+        """Open the journal for `compiled`, validating and folding prior records.
+
+        The file is read once here. Records for another workflow, or for another
+        fingerprint of this one, are filtered out -- unless `resume=True`, which
+        refuses them with `WorkflowTopologyMismatchError` instead. Every compiled
+        task with no surviving state is then written an attempt-0 `pending`
+        record, so the file always describes the whole workflow. `verifiers` are
+        merged over the built-in defaults.
+        """
         self.path = config.path
         self.workflow_id = compiled.workflow_id
         self.workflow_fingerprint = compiled.fingerprint
@@ -233,14 +255,17 @@ class Journal:
         for index, raw_line in enumerate(lines):
             line_start = offset
             offset += len(raw_line)
-            is_torn_tail = index == len(lines) - 1 and not raw_line.endswith((b"\n", b"\r"))
+            is_torn_tail = index == len(lines) - 1 and not raw_line.endswith(
+                (b"\n", b"\r")
+            )
             record = self._parse_record(raw_line, index, is_torn_tail, line_start)
             if record is None:
                 continue
             version = record.get("schema_version")
             if version != SCHEMA_VERSION:
                 raise UnsupportedJournalSchemaError(
-                    f"{self.path}: schema_version {version!r}, expected {SCHEMA_VERSION}"
+                    f"{self.path}: schema_version {version!r}, "
+                    f"expected {SCHEMA_VERSION}"
                 )
             if record.get("workflow_id") != self.workflow_id:
                 continue
@@ -255,7 +280,7 @@ class Journal:
         return states
 
     def _check_fingerprint(self, record: dict[str, Any]) -> bool:
-        """True when the record's fingerprint mismatches and it must be skipped.
+        """Return True when the record's fingerprint mismatches and must be skipped.
 
         On resume a mismatch refuses the journal (WorkflowTopologyMismatchError).
         Otherwise it warns once per load and ignores the mismatched records (a
@@ -348,12 +373,13 @@ class Journal:
 
     def _truncate_torn_tail(self, offset: int) -> None:
         """Remove only a non-newline-terminated final record after a crash."""
-        with open(self.path, "r+b") as handle:
+        with self.path.open("r+b") as handle:
             handle.truncate(offset)
             handle.flush()
             os.fsync(handle.fileno())
 
     def next_attempt(self, task_id: str) -> int:
+        """Return the attempt number the next record for `task_id` should carry."""
         state = self._states.get(task_id)
         return state.attempt + 1 if state is not None else 1
 
@@ -362,8 +388,11 @@ class Journal:
         return self.decide_task(compiled_task.task_id, compiled_task.task)
 
     def decide_task(self, task_id: str, task: Task[Any]) -> ResumeAction:
-        """Resume decision for anything with a journal identity: a compiled unit
-        or one step of a composite."""
+        """Return the resume decision for anything with a journal identity.
+
+        That is a compiled unit or one step of a composite; both are decided from
+        the same recorded state plus the task's own idempotence and reusability.
+        """
         return decide_resume(
             self._states.get(task_id),
             idempotent=task.idempotent,
@@ -372,21 +401,30 @@ class Journal:
         )
 
     def record_started(self, task_id: str, attempt: int) -> None:
-        self._write(task_id, attempt, "started", started_at=_utc_iso(), finished_at=None)
+        """Record that an attempt has begun, before the task runs."""
+        self._write(
+            task_id, attempt, "started", started_at=_utc_iso(), finished_at=None
+        )
 
     def record_passed(
         self, task_id: str, attempt: int, evidence: tuple[Evidence, ...] = ()
     ) -> None:
-        self._write(task_id, attempt, "passed", finished_at=_utc_iso(), evidence=evidence)
+        """Record that an attempt passed, carrying the evidence it produced."""
+        self._write(
+            task_id, attempt, "passed", finished_at=_utc_iso(), evidence=evidence
+        )
 
     def record_failed(self, task_id: str, attempt: int) -> None:
+        """Record that an attempt ended in failure, with no evidence."""
         self._write(task_id, attempt, "failed", finished_at=_utc_iso())
 
     def record_skipped(self, task_id: str, attempt: int) -> None:
         """Record a skip, carrying forward the evidence that justified it."""
         prior = self._states.get(task_id)
         evidence = prior.evidence if prior is not None else ()
-        self._write(task_id, attempt, "skipped", finished_at=_utc_iso(), evidence=evidence)
+        self._write(
+            task_id, attempt, "skipped", finished_at=_utc_iso(), evidence=evidence
+        )
 
     def record_retained(self, resource_title: str, order: int, value: object) -> bool:
         """Write down a resource `keep` held on to, with the value release() needs.
@@ -411,7 +449,7 @@ class Journal:
             "order": order,
             "value": encoded,
         }
-        with open(self.path, "a", encoding="utf-8") as handle:
+        with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, separators=(",", ":")) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -442,7 +480,7 @@ class Journal:
             "evidence": _evidence_to_json(evidence),
         }
         line = json.dumps(record, separators=(",", ":")) + "\n"
-        with open(self.path, "a", encoding="utf-8") as handle:
+        with self.path.open("a", encoding="utf-8") as handle:
             handle.write(line)
             handle.flush()
             if status == "started":

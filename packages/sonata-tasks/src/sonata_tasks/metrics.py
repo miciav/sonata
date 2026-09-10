@@ -1,3 +1,5 @@
+"""Check Prometheus scrape output for expected samples and value minimums."""
+
 from __future__ import annotations
 
 import re
@@ -5,6 +7,7 @@ from collections.abc import Callable, Mapping
 from functools import partial
 
 from sonata_engine import TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.core.fingerprint import semantic_key as build_semantic_key
 from sonata_tasks.execution.models import CommandOptions, TaskResult
@@ -19,6 +22,12 @@ _LABEL = re.compile(r'([A-Za-z_]\w*)="((?:[^"\\]|\\.)*)"')
 
 
 def metric_sum(scrape: str, name: str, labels: Mapping[str, str]) -> tuple[int, float]:
+    """Sum the samples of one metric in a Prometheus text scrape.
+
+    Only lines for metric ``name`` whose labels include every entry in
+    ``labels`` are counted. Returns the number of matching samples and their
+    total, which is ``(0, 0.0)`` when nothing matches.
+    """
     matches, total = 0, 0.0
     for line in scrape.splitlines():
         match = _SAMPLE.match(line)
@@ -39,14 +48,19 @@ def _resolve(endpoint: MetricsEndpoint, inputs: TaskInputs) -> str:
 
 
 def _require_metric_sum(
-    url: object, scrape: str, names: tuple[str, ...], labels: Mapping[str, str], minimum: float
+    url: object,
+    scrape: str,
+    names: tuple[str, ...],
+    labels: Mapping[str, str],
+    minimum: float,
 ) -> None:
     for name in names:
         matches, total = metric_sum(scrape, name, labels)
         if matches:
             if total < minimum:
                 raise RuntimeError(
-                    f"{url}: {name}{dict(labels)} sum was {total}, expected >= {minimum}"
+                    f"{url}: {name}{dict(labels)} sum was {total}, "
+                    f"expected >= {minimum}"
                 )
             return
     raise RuntimeError(f"{url}: none of {names} appeared with labels {dict(labels)}")
@@ -81,6 +95,8 @@ def _check_minimums(
 
 
 class PrometheusScrapeCheckTask(CommandTask):
+    """Scrape a metrics endpoint and assert which samples it must contain."""
+
     def __init__(
         self,
         *,
@@ -93,6 +109,19 @@ class PrometheusScrapeCheckTask(CommandTask):
         title: str | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Configure the scrape and the substring checks over its output.
+
+        ``expect`` entries must each appear in the scraped text and ``reject``
+        entries must not; the first one that violates this fails the task.
+        ``url`` may be a callable resolving the endpoint at run time, which is
+        why such a call also needs its own ``semantic_key``. ``title`` defaults
+        to one naming the endpoint.
+
+        Raises:
+            ValueError: If both ``expect`` and ``reject`` are empty, or if
+                ``url`` is callable and no ``semantic_key`` was supplied.
+
+        """
         if not expect and not reject:
             raise ValueError("a scrape check must expect or reject at least one sample")
         if callable(url) and not semantic_key:
@@ -119,6 +148,8 @@ class PrometheusScrapeCheckTask(CommandTask):
 
 
 class PrometheusMinimumCheckTask(CommandTask):
+    """Scrape a metrics endpoint and assert its metric sums reach a floor."""
+
     def __init__(
         self,
         *,
@@ -131,6 +162,20 @@ class PrometheusMinimumCheckTask(CommandTask):
         title: str | None = None,
         semantic_key: str | None = None,
     ) -> None:
+        """Configure the scrape and the value floors to check.
+
+        Each ``minimums`` entry is a single metric name, its required labels,
+        and the floor its sum must reach. Each ``any_minimums`` entry is instead
+        a tuple of alternative names, of which the first that appears with those
+        labels must reach the floor. ``url`` may be a callable resolving the
+        endpoint at run time, which is why such a call also needs its own
+        ``semantic_key``. ``title`` defaults to a generic description.
+
+        Raises:
+            ValueError: If no expectations were given, or if ``url`` is callable
+                and no ``semantic_key`` was supplied.
+
+        """
         if not minimums and not any_minimums:
             raise ValueError("a metric minimum check needs at least one expectation")
         if callable(url) and not semantic_key:

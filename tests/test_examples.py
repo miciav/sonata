@@ -1,5 +1,8 @@
-"""Executes the shipped examples so an API-signature change can't silently
-break them (nothing else under `tests/` touches `examples/`)."""
+"""Run the shipped examples so an API-signature change cannot break them silently.
+
+Nothing else under `tests/` touches `examples/`, so these runs are the only
+guard the example scripts have.
+"""
 
 from __future__ import annotations
 
@@ -33,7 +36,9 @@ def test_demo_workflow_example_runs_successfully() -> None:
 
 
 def test_first_demo_build_starts_a_fresh_image_tuple() -> None:
-    build_image = run_path(str(REPO_ROOT / "examples" / "demo_workflow.py"))["BuildImage"]
+    build_image = run_path(str(REPO_ROOT / "examples" / "demo_workflow.py"))[
+        "BuildImage"
+    ]
     inputs = replace(TaskInputs.empty(), _upstream="outer value")
 
     outcome = build_image("control-plane", first=True).run(inputs)
@@ -42,8 +47,11 @@ def test_first_demo_build_starts_a_fresh_image_tuple() -> None:
 
 
 def test_demo_workflow_example_reports_steps_without_compiling_them() -> None:
-    """The demo is where the composite contract is visible end to end: the steps
-    appear in the event stream, and the compiled unit list is unaffected."""
+    """Keep step ids out of the compiled unit list while they still report.
+
+    The demo is where the composite contract is visible end to end: the steps
+    appear in the event stream, and the compiled unit list is unaffected.
+    """
     stdout = _run_demo().stdout
     events, _, compiled = stdout.partition("Compiled task IDs and outcomes:")
 

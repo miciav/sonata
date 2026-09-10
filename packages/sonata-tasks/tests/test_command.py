@@ -3,11 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sonata_engine import Steps, TaskInputs, Workflow
+
 from sonata_tasks.core.command import Argv, CommandTask
 from sonata_tasks.execution.models import CommandOptions, TaskResult
 from sonata_tasks.testing import RecordingExecutor
 
-from sonata_engine import Steps, TaskInputs, Workflow
+# CommandOptions is frozen, and a default argument is evaluated once at definition
+# time anyway, so a shared module-level instance is not new sharing.
+_DEFAULT_OPTIONS = CommandOptions()
 
 
 def test_command_returns_result_and_builds_the_spec() -> None:
@@ -36,7 +40,7 @@ def test_failure_reports_both_streams_and_verify_runs_only_after_success() -> No
         verify=calls.append,
         semantic_key="verify:v1",
     )
-    with pytest.raises(RuntimeError, match="(?s)stderr.*stdout"):
+    with pytest.raises(RuntimeError, match=r"(?s)stderr.*stdout"):
         task.run(TaskInputs.empty())
     assert calls == []
 
@@ -45,7 +49,9 @@ def test_failure_reports_both_streams_and_verify_runs_only_after_success() -> No
     ("status", "code"),
     [("passed", 1), ("failed", 0), ("skipped", 0), ("passed", None)],
 )
-def test_executor_status_and_code_must_be_coherent(status: str, code: int | None) -> None:
+def test_executor_status_and_code_must_be_coherent(
+    status: str, code: int | None
+) -> None:
     executor = RecordingExecutor(results=[TaskResult("", status, code)])  # type: ignore[arg-type]
     task = CommandTask(title="X", argv=("true",), executor=executor)
     with pytest.raises(RuntimeError, match="incoherent"):
@@ -84,7 +90,7 @@ def test_every_semantic_command_input_changes_the_fingerprint() -> None:
         *,
         argv: Argv = ("echo", "a"),
         role: str = "host",
-        options: CommandOptions = CommandOptions(),
+        options: CommandOptions = _DEFAULT_OPTIONS,
         target: str = "local",
         semantic_key: str | None = None,
     ) -> CommandTask:
@@ -112,7 +118,7 @@ def test_every_semantic_command_input_changes_the_fingerprint() -> None:
     assert all(_fingerprint(task) != base for task in variants)
 
 
-def test_equivalent_mapping_order_has_the_same_fingerprint_and_payload_hides_values() -> None:
+def test_mapping_order_does_not_affect_fingerprint_and_payload_hides_values() -> None:
     first = CommandTask(
         title="Same",
         argv=("echo", "secret-argv"),
@@ -129,7 +135,9 @@ def test_equivalent_mapping_order_has_the_same_fingerprint_and_payload_hides_val
     assert "secret" not in repr(first._fingerprint_payload())
 
 
-def test_dynamic_argv_is_not_called_during_compile_and_key_reaches_nested_steps() -> None:
+def test_dynamic_argv_is_not_called_during_compile_and_key_reaches_nested_steps() -> (
+    None
+):
     calls: list[TaskInputs] = []
 
     def argv(inputs: TaskInputs) -> tuple[str, ...]:

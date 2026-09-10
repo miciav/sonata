@@ -3,12 +3,12 @@ from pathlib import Path
 from typing import override
 
 import pytest
+from sonata_engine import Workflow
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compose import DockerComposeProject, docker_compose_resource
 from sonata_tasks.execution.models import CommandOptions
 from sonata_tasks.tasks.models import CommandTaskSpec, TaskResult
-
-from sonata_engine import Workflow
 
 
 @dataclass
@@ -113,7 +113,9 @@ def test_compose_resource_passes_project_environment_to_compose() -> None:
     workflow = Workflow("compose")
     workflow.add(
         CommandTask(title="Use deployment", argv=("true",), executor=executor),
-        requires=(docker_compose_resource(project, executor=executor, options=options),),
+        requires=(
+            docker_compose_resource(project, executor=executor, options=options),
+        ),
     )
 
     workflow.run()
@@ -122,10 +124,13 @@ def test_compose_resource_passes_project_environment_to_compose() -> None:
 
 
 def test_a_prebuilt_image_is_deployed_without_rebuilding_it() -> None:
-    """The compose service declares both `image:` and `build:`, so `up --build`
+    """Deploy the declared image instead of rebuilding it with `up --build`.
+
+    The compose service declares both `image:` and `build:`, so `up --build`
     rebuilds from the Dockerfile and tags the result with the image name. For a
     natively-compiled control plane that silently substitutes a JVM build and
-    then reports its memory as the native figure."""
+    then reports its memory as the native figure.
+    """
     executor = RecordingExecutor()
     project = DockerComposeProject(
         name="example",

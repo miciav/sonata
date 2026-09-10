@@ -1,3 +1,5 @@
+"""Azure VM provider: lifecycle, remote execution, and file transfer."""
+
 from __future__ import annotations
 
 import ipaddress
@@ -29,6 +31,13 @@ def _required_value(payload: Mapping[object, object], key: str) -> Any:  # noqa:
 
 @dataclass(frozen=True, slots=True)
 class AzureVmFacts:
+    """The live VM facts read back from Azure.
+
+    Captures where the VM runs, how big it is, and which image it was built
+    from, so a run can be reproduced from what was actually provisioned rather
+    than what was requested.
+    """
+
     location: str
     vm_size: str
     disk_size_gb: int
@@ -38,10 +47,19 @@ class AzureVmFacts:
 class AzureVmProvider:
     """Generic Azure VM provider: lifecycle, command execution, file transfer."""
 
-    def __init__(self, repo_root: Path, *, remote_project_name: str | None = None) -> None:
+    def __init__(
+        self, repo_root: Path, *, remote_project_name: str | None = None
+    ) -> None:
+        """Store the repository root and the optional remote project name.
+
+        ``_vms`` caches the AzureVM handles this provider has touched, keyed by
+        the request attributes that identify one.
+        """
         self.repo_root = Path(repo_root)
         self._remote_project_name = remote_project_name
-        self._vms: dict[tuple[str, str | None, str | None, str, str | None], AzureVM] = {}
+        self._vms: dict[
+            tuple[str, str | None, str | None, str, str | None], AzureVM
+        ] = {}
 
     def _client(self, request: VmRequest) -> AzureClient:
         private_key = self.ssh_private_key_path(request)
@@ -57,7 +75,9 @@ class AzureVmProvider:
             raise ValueError("a managed Azure VM requires an explicit name")
         return request.name
 
-    def _vm_key(self, request: VmRequest) -> tuple[str, str | None, str | None, str, str | None]:
+    def _vm_key(
+        self, request: VmRequest
+    ) -> tuple[str, str | None, str | None, str, str | None]:
         key = self.ssh_private_key_path(request)
         return (
             self._vm_name(request),
@@ -79,6 +99,11 @@ class AzureVmProvider:
         return find_ssh_private_key_path()
 
     def ssh_private_key_path(self, request: VmRequest) -> Path | None:
+        """Return the private key matching the configured SSH key, or None.
+
+        The request may name the public key instead; its private half sits
+        beside it under the same stem.
+        """
         key = self._ssh_key(request)
         if key is None:
             return None
@@ -89,20 +114,37 @@ class AzureVmProvider:
         return key
 
     def remote_home(self, request: VmRequest) -> str:
+        """Return the remote user's home directory for the request."""
         return vm_remote_home(request)
 
     def remote_project_dir(self, request: VmRequest) -> str:
+        """Return the project directory under the remote home.
+
+        Raises ValueError when no remote project name was configured.
+        """
         if not self._remote_project_name:
             raise ValueError("remote_project_name is required for remote_project_dir")
         return f"{self.remote_home(request)}/{self._remote_project_name}"
 
     def connection_host(self, request: VmRequest) -> str:
+        """Return the VM's public IP address as reported by Azure."""
         return self._vm(request).wait_for_ip()
 
     def teardown(self, request: VmRequest) -> ShellExecutionResult:
+        """Delete the VM and report whether it is really gone from Azure.
+
+        Deletion is driven from the local tofu workspace, so a VM deleted
+        outside tofu cannot be destroyed through the SDK. When the VM is still
+        present in Azure afterwards -- and therefore still billing -- the
+        returned result is a failure describing what is left and how to list
+        it; otherwise the result is a success. A VM missing from the tofu
+        workspace is not an error by itself.
+        """
         name = self._vm_name(request)
         try:
-            vm = self._vms.pop(self._vm_key(request), None) or self._client(request).get_vm(name)
+            vm = self._vms.pop(self._vm_key(request), None) or self._client(
+                request
+            ).get_vm(name)
             vm.close()
             vm.delete()
         except VmNotFoundError:
@@ -118,8 +160,8 @@ class AzureVmProvider:
             return_code=1,
             stdout="",
             stderr=(
-                f"{name} still exists in Azure (resource group {group}) after teardown, "
-                f"so it is still billing. The local tofu workspace "
+                f"{name} still exists in Azure (resource group {group}) after "
+                f"teardown, so it is still billing. The local tofu workspace "
                 f"~/.azure-vm-sdk/{name} is missing or incomplete, and `tofu destroy` "
                 f"cannot delete what it did not record. List what is left with: "
                 f"az resource list -g {group} "
@@ -152,6 +194,12 @@ class AzureVmProvider:
         raise RuntimeError(process.stderr or "Azure CLI command failed")
 
     def ensure_running(self, request: VmRequest) -> ShellExecutionResult:
+        """Launch or converge the VM and return the command that was run.
+
+        Whether to launch or re-apply an existing deployment is decided by
+        asking Azure, because the local tofu workspace can report a VM that no
+        longer exists as running.
+        """
         name = self._vm_name(request)
         client = self._client(request)
         parameters = {
@@ -176,6 +224,11 @@ class AzureVmProvider:
         return successful_result(["azure", "ensure_running", name])
 
     def release_vm_facts(self, request: VmRequest) -> AzureVmFacts:
+        """Read the deployed VM's location, size, disk, and image from Azure.
+
+        Raises ValueError without a resource group and RuntimeError when the
+        CLI call fails or its response is missing fields.
+        """
         resource_group = request.azure_resource_group
         if not resource_group:
             raise ValueError("Azure resource group is required")
@@ -228,10 +281,20 @@ class AzureVmProvider:
         source_cidrs: tuple[str, ...],
         priority_base: int = 1010,
     ) -> None:
+        """Allow the given ports from ``source_cidrs`` on the VM's NSG.
+
+        One inbound TCP rule is created per port, named after it with priority
+        ascending from ``priority_base``. Source CIDRs are normalized and
+        deduplicated first; an unbounded CIDR (``/0``), an empty source list,
+        or an out-of-range port raises ValueError, and a rule whose sources
+        Azure did not store as requested raises RuntimeError.
+        """
         resource_group = request.azure_resource_group
         if not resource_group:
             raise ValueError("Azure resource group is required")
-        networks = tuple(ipaddress.ip_network(source, strict=False) for source in source_cidrs)
+        networks = tuple(
+            ipaddress.ip_network(source, strict=False) for source in source_cidrs
+        )
         if any(network.prefixlen == 0 for network in networks):
             raise ValueError("Azure NSG source CIDRs must be bounded")
         sources = tuple(dict.fromkeys(map(str, networks)))
@@ -295,6 +358,11 @@ class AzureVmProvider:
         remote_dir: str | None = None,
         dry_run: bool = False,
     ) -> ShellExecutionResult:
+        """Run ``argv`` on the VM and return the command's result.
+
+        ``remote_dir`` is the working directory of the command on the guest.
+        ``dry_run`` is accepted for interface compatibility and has no effect.
+        """
         del dry_run
         vm = self._vm(request)
         # The Azure client's `cwd` is the directory on the VM, same meaning.
@@ -313,6 +381,7 @@ class AzureVmProvider:
         source: Path,
         destination: str,
     ) -> ShellExecutionResult:
+        """Copy a local file to the VM and return a successful result."""
         vm = self._vm(request)
         vm.transfer(str(source), destination)
         return successful_result(["scp", str(source), destination])
@@ -324,6 +393,11 @@ class AzureVmProvider:
         source: str,
         destination: Path,
     ) -> ShellExecutionResult:
+        """Copy a remote file from the VM to a local destination.
+
+        The copy runs over scp against the VM's public IP, trusting the
+        disposable VM's host key; the process result is returned.
+        """
         ip = self._vm(request).wait_for_ip()
         key = self.ssh_private_key_path(request)
         cmd: list[str] = ["scp"]

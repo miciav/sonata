@@ -1,3 +1,5 @@
+"""Deploy, wait for, and tear down a docker compose project."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from sonata_engine import Resource, Steps, TaskInputs
+
 from sonata_tasks.command import CommandTask
 from sonata_tasks.compensation import compensated_resource
 from sonata_tasks.execution.models import CommandOptions
@@ -13,6 +16,8 @@ from sonata_tasks.execution.ports import CommandTaskExecutor
 
 @dataclass(frozen=True, slots=True)
 class DockerComposeProject:
+    """A compose project to run: its name, file, and readiness endpoint."""
+
     name: str
     file: Path
     ready_url: str
@@ -20,6 +25,8 @@ class DockerComposeProject:
 
 
 class DeployDockerCompose(CommandTask):
+    """Bring a compose project up detached and wait for its services."""
+
     def __init__(
         self,
         project: DockerComposeProject,
@@ -29,6 +36,11 @@ class DeployDockerCompose(CommandTask):
         options: CommandOptions | None = None,
         title: str | None = None,
     ) -> None:
+        """Configure the ``docker compose up -d --wait`` command.
+
+        ``--build`` is added unless ``project.build`` is false. ``title``
+        defaults to one naming the project.
+        """
         super().__init__(
             title=title or f"Deploy Docker Compose project {project.name}",
             argv=(
@@ -50,6 +62,8 @@ class DeployDockerCompose(CommandTask):
 
 
 class WaitForDockerCompose(CommandTask):
+    """Poll the project's readiness URL until it answers."""
+
     def __init__(
         self,
         project: DockerComposeProject,
@@ -59,6 +73,10 @@ class WaitForDockerCompose(CommandTask):
         options: CommandOptions | None = None,
         title: str | None = None,
     ) -> None:
+        """Configure the ``curl`` retry loop against ``project.ready_url``.
+
+        ``title`` defaults to one naming the project.
+        """
         super().__init__(
             title=title or f"Wait for Docker Compose project {project.name}",
             argv=(
@@ -79,6 +97,8 @@ class WaitForDockerCompose(CommandTask):
 
 
 class DestroyDockerCompose(CommandTask):
+    """Bring a compose project down, optionally dropping volumes and orphans."""
+
     def __init__(
         self,
         project: DockerComposeProject,
@@ -90,7 +110,21 @@ class DestroyDockerCompose(CommandTask):
         remove_volumes: bool = False,
         remove_orphans: bool = False,
     ) -> None:
-        argv = ["docker", "compose", "-f", str(project.file), "-p", project.name, "down"]
+        """Configure the ``docker compose down`` command.
+
+        ``remove_volumes`` and ``remove_orphans`` add ``--volumes`` and
+        ``--remove-orphans`` respectively; ``title`` defaults to one naming the
+        project.
+        """
+        argv = [
+            "docker",
+            "compose",
+            "-f",
+            str(project.file),
+            "-p",
+            project.name,
+            "down",
+        ]
         if remove_volumes:
             argv.append("--volumes")
         if remove_orphans:
@@ -119,7 +153,9 @@ def docker_compose_resource(
         title=f"Acquire Docker Compose project {project.name}",
         steps=(
             DeployDockerCompose(project, executor=executor, role=role, options=options),
-            WaitForDockerCompose(project, executor=executor, role=role, options=options),
+            WaitForDockerCompose(
+                project, executor=executor, role=role, options=options
+            ),
         ),
     )
     destroy = DestroyDockerCompose(

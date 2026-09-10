@@ -249,13 +249,13 @@ Add to `ReusableTask`, replacing what `compiled.py` used to reach in for:
 In `src/sonata_engine/core/compiled.py`, inside the `topology` comprehension, replace this line:
 
 ```python
-                task.task.reuse_key if isinstance(task.task, ReusableTask) else None,
+(task.task.reuse_key if isinstance(task.task, ReusableTask) else None,)
 ```
 
 with:
 
 ```python
-                task.task._fingerprint_payload(),
+(task.task._fingerprint_payload(),)
 ```
 
 Remove the now-unused `ReusableTask` import from that file if nothing else uses it — check with `grep -n ReusableTask src/sonata_engine/core/compiled.py` before deleting.
@@ -303,19 +303,20 @@ before changing the execution path.
 In `src/sonata_engine/journal.py`, replace the body of `decide` and add the general form beside it:
 
 ```python
-    def decide(self, compiled_task: CompiledTask[object]) -> ResumeAction:
-        """Resume decision for a consumer task (may raise `AmbiguousTaskStateError`)."""
-        return self.decide_task(compiled_task.task_id, compiled_task.task)
+def decide(self, compiled_task: CompiledTask[object]) -> ResumeAction:
+    """Resume decision for a consumer task (may raise `AmbiguousTaskStateError`)."""
+    return self.decide_task(compiled_task.task_id, compiled_task.task)
 
-    def decide_task(self, task_id: str, task: Task[Any]) -> ResumeAction:
-        """Resume decision for anything with a journal identity: a compiled unit
-        or one step of a composite."""
-        return decide_resume(
-            self._states.get(task_id),
-            idempotent=task.idempotent,
-            reusable=isinstance(task, ReusableTask),
-            verifiers=self.verifiers,
-        )
+
+def decide_task(self, task_id: str, task: Task[Any]) -> ResumeAction:
+    """Resume decision for anything with a journal identity: a compiled unit
+    or one step of a composite."""
+    return decide_resume(
+        self._states.get(task_id),
+        idempotent=task.idempotent,
+        reusable=isinstance(task, ReusableTask),
+        verifiers=self.verifiers,
+    )
 ```
 
 Add `Task` and `Any` to that module's imports if absent.
@@ -383,27 +384,29 @@ def _execute_recorded(
 Then replace the body of `_run_unit` (keep its signature and docstring) with:
 
 ```python
-        def make_inputs() -> TaskInputs:
-            return state.inputs_for(
-                compiled_task.resource.requires
-                if compiled_task.kind == "acquire" and compiled_task.resource is not None
-                else compiled_task.required_resources
-            )
+def make_inputs() -> TaskInputs:
+    return state.inputs_for(
+        compiled_task.resource.requires
+        if compiled_task.kind == "acquire" and compiled_task.resource is not None
+        else compiled_task.required_resources
+    )
 
-        def on_outcome(outcome: TaskOutcome[Any]) -> None:
-            if compiled_task.kind == "acquire" and compiled_task.resource is not None:
-                state.publish(compiled_task.resource, outcome.value)
-            if on_executed is not None:
-                on_executed()
 
-        return _execute_recorded(
-            task=compiled_task.task,
-            task_id=compiled_task.task_id,
-            make_inputs=make_inputs,
-            jrnl=jrnl,
-            resume=resume,
-            on_outcome=on_outcome,
-        )
+def on_outcome(outcome: TaskOutcome[Any]) -> None:
+    if compiled_task.kind == "acquire" and compiled_task.resource is not None:
+        state.publish(compiled_task.resource, outcome.value)
+    if on_executed is not None:
+        on_executed()
+
+
+return _execute_recorded(
+    task=compiled_task.task,
+    task_id=compiled_task.task_id,
+    make_inputs=make_inputs,
+    jrnl=jrnl,
+    resume=resume,
+    on_outcome=on_outcome,
+)
 ```
 
 `self._next_attempt` may now be unused — check with `grep -n _next_attempt src/sonata_engine/core/workflow.py`; `_release` still calls it, so expect it to stay.
@@ -800,7 +803,10 @@ def _run(*steps: Task[object], title: str = "Deploy") -> object:
 
 
 def test_a_value_flows_through_the_pipeline() -> None:
-    assert _run(_Produce("Install", "rel-42"), _Forward(), _Decorate()) == "http://rel-42.svc"
+    assert (
+        _run(_Produce("Install", "rel-42"), _Forward(), _Decorate())
+        == "http://rel-42.svc"
+    )
 
 
 def test_none_flows_as_a_legitimate_value() -> None:
@@ -833,7 +839,9 @@ def test_a_nested_composite_receives_the_outer_upstream() -> None:
 
 def test_a_composite_compiles_to_one_unit_and_selection_keeps_it_whole() -> None:
     workflow = Workflow(workflow_id="w")
-    workflow.add(Steps(title="Deploy", steps=(_Produce("Install", "rel-42"), _Decorate())))
+    workflow.add(
+        Steps(title="Deploy", steps=(_Produce("Install", "rel-42"), _Decorate()))
+    )
 
     compiled = workflow.compile()
     assert [task.task_id for task in compiled.tasks] == ["001.deploy"]
@@ -862,7 +870,9 @@ def test_construction_rejects_an_empty_step_list() -> None:
 def test_construction_rejects_duplicate_normalized_slugs() -> None:
     """'Build A' and 'Build-A' normalize to the same journal identity."""
     with pytest.raises(ValueError, match="duplicate step slug 'build-a'"):
-        Steps(title="Deploy", steps=(_Produce("Build A", "1"), _Produce("Build-A", "2")))
+        Steps(
+            title="Deploy", steps=(_Produce("Build A", "1"), _Produce("Build-A", "2"))
+        )
 
 
 def test_construction_rejects_a_title_that_normalizes_to_nothing() -> None:
@@ -1022,7 +1032,9 @@ class Steps(Task[Any]):
             # A step that ran contributes its value, including a legitimate
             # None; a skipped step contributes None, the only value a skippable
             # ReusableTask may return.
-            upstream = execution.outcome.value if execution.outcome is not None else None
+            upstream = (
+                execution.outcome.value if execution.outcome is not None else None
+            )
         return TaskOutcome(value=upstream)
 ```
 

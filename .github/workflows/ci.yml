@@ -3,8 +3,58 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Lint, format, types, security.
+  #
+  # Runs the same hooks as local development through pre-commit, so the two can
+  # not drift. This job is new: the checks used to be written inline in the
+  # engine and catalogue jobs below, which meant a developer running
+  # `uv run ruff check` locally and CI could disagree without anyone noticing.
+  #
+  # The workspace is synced with every extra first, because the catalogue's
+  # basedpyright hook needs the optional integrations (shellcraft, proxmox-sdk,
+  # azure-vm-sdk, multipass-sdk) to be importable.
+  # ---------------------------------------------------------------------------
+  pre-commit:
+    name: pre-commit (ruff, basedpyright, bandit, import-linter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the workspace
+        run: uv sync --locked --all-packages --all-groups --all-extras
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pip pre-commit
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure --color=always
+
   engine:
     runs-on: ubuntu-latest
     steps:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from sonata_tasks.execution.bindings import RoleBindings, RoleBoundCommandTaskExecutor
 from sonata_tasks.execution.models import CommandTaskSpec
 from sonata_tasks.testing import RecordingExecutor
@@ -25,6 +26,8 @@ def test_missing_binding_fails_before_any_backend_runs() -> None:
 
 
 @pytest.mark.parametrize("bindings", [{}, {"": RecordingExecutor()}])
-def test_bindings_require_non_empty_roles(bindings: dict[str, RecordingExecutor]) -> None:
+def test_bindings_require_non_empty_roles(
+    bindings: dict[str, RecordingExecutor],
+) -> None:
     with pytest.raises(ValueError, match="non-empty"):
         RoleBindings(bindings)

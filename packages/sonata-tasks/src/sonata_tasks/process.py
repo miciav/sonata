@@ -1,32 +1,40 @@
+"""Run and supervise a long-lived local process as a resource."""
+
 from __future__ import annotations
 
 import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol, TypeVar, overload
+from typing import Any, Protocol, overload
 
 from sonata_engine import Resource, TaskInputs
+
 from sonata_tasks.compensation import best_effort
 
 
 class ManagedProcess(Protocol):
     """The lifecycle operations needed from a spawned process."""
 
-    def poll(self) -> int | None: ...
+    def poll(self) -> int | None:
+        """Return the exit code, or ``None`` while the process still runs."""
+        ...
 
-    def terminate(self) -> None: ...
+    def terminate(self) -> None:
+        """Ask the process to stop."""
+        ...
 
-    def kill(self) -> None: ...
+    def kill(self) -> None:
+        """Stop the process forcefully."""
+        ...
 
-    def wait(self, timeout: float | None = None) -> int: ...
-
-
-P = TypeVar("P", bound=ManagedProcess)
+    def wait(self, timeout: float | None = None) -> int:
+        """Block until the process exits and return its exit code."""
+        ...
 
 
 @overload
-def managed_process_resource(
+def managed_process_resource[P: ManagedProcess](
     *,
     title: str,
     argv: tuple[str, ...],
@@ -66,7 +74,9 @@ def _wait_until_ready(
     for attempt in range(readiness_attempts):
         exit_code = current.poll()
         if exit_code is not None:
-            raise RuntimeError(f"{title} exited with code {exit_code} before becoming ready")
+            raise RuntimeError(
+                f"{title} exited with code {exit_code} before becoming ready"
+            )
         if ready():
             return current
         if attempt < readiness_attempts - 1:
@@ -85,7 +95,7 @@ def managed_process_resource(
     readiness_interval: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Resource[Any]:
-    """A long-running local process as a Sonata resource.
+    """Model a long-running local process as a Sonata resource.
 
     The acquire hands back a process that is already answering `ready()`, so
     consumers never have to poll for it themselves. The release always stops it,
@@ -114,9 +124,12 @@ def managed_process_resource(
             # acquire pass against the WRONG process (the original bug's shape),
             # so refuse instead of racing it.
             raise RuntimeError(
-                f"{title}: refusing to start — something is already answering the readiness check"
+                f"{title}: refusing to start — something is already "
+                "answering the readiness check"
             )
-        current = actual_spawn(argv, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        current = actual_spawn(
+            argv, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT
+        )
         try:
             return _wait_until_ready(
                 title=title,
@@ -136,7 +149,11 @@ def managed_process_resource(
             # process it started, so nothing outside it could stop that process.
             # It shares the other half — a failed stop must not replace the
             # reason the process never came up.
-            best_effort(error, lambda: stop(TaskInputs.empty(), current), what=f"stop for {title}")
+            best_effort(
+                error,
+                lambda: stop(TaskInputs.empty(), current),
+                what=f"stop for {title}",
+            )
             raise
 
     # always_release on purpose: `keep` holds on to everything that did not ask to

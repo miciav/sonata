@@ -40,7 +40,7 @@ class _ReusableNoop(ReusableTask):
 def _legacy_single_task_fingerprint(
     task: Task[object], task_id: str, payload: object
 ) -> str:
-    """The pre-refactor canonical form, kept here as the compatibility oracle."""
+    """Return the pre-refactor canonical fingerprint, the compatibility oracle."""
     topology = [
         (
             task_id,
@@ -145,7 +145,9 @@ def test_reusable_task_configuration_changes_workflow_fingerprint() -> None:
 
 def test_resource_dependency_edges_change_workflow_fingerprint() -> None:
     vm = Resource(
-        title="Acquire vm", acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+        title="Acquire vm",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
     )
     helm = Resource(
         title="Acquire helm",
@@ -158,7 +160,10 @@ def test_resource_dependency_edges_change_workflow_fingerprint() -> None:
         workflow_id="wf",
         tasks=(
             CompiledTask(
-                task_id="001.acquire-vm", task=_NoopTask("Acquire vm"), resource=vm, kind="acquire"
+                task_id="001.acquire-vm",
+                task=_NoopTask("Acquire vm"),
+                resource=vm,
+                kind="acquire",
             ),
             CompiledTask(
                 task_id="002.acquire-helm",
@@ -174,7 +179,10 @@ def test_resource_dependency_edges_change_workflow_fingerprint() -> None:
         workflow_id="wf",
         tasks=(
             CompiledTask(
-                task_id="001.acquire-vm", task=_NoopTask("Acquire vm"), resource=vm, kind="acquire"
+                task_id="001.acquire-vm",
+                task=_NoopTask("Acquire vm"),
+                resource=vm,
+                kind="acquire",
             ),
             CompiledTask(
                 task_id="002.acquire-helm",
@@ -191,14 +199,21 @@ def test_resource_dependency_edges_change_workflow_fingerprint() -> None:
 
 
 def test_fingerprint_raises_typed_error_for_resource_with_no_acquire_unit() -> None:
-    """`CompiledWorkflow`/`CompiledTask` are public exports: a hand-built one that
+    """Assert a unit with a resource but no acquire unit raises a typed error.
+
+    `CompiledWorkflow`/`CompiledTask` are public exports: a hand-built one that
     names a resource with no matching acquire unit must fail with a readable,
-    typed error instead of a bare `KeyError`."""
+    typed error instead of a bare `KeyError`.
+    """
     orphan = Resource(
-        title="Acquire orphan", acquire=lambda _inputs: None, release=lambda _inputs, _value: None
+        title="Acquire orphan",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _value: None,
     )
-    task = CompiledTask(task_id="001.use", task=_NoopTask("Use"), required_resources=(orphan,))
+    task = CompiledTask(
+        task_id="001.use", task=_NoopTask("Use"), required_resources=(orphan,)
+    )
     compiled = CompiledWorkflow(workflow_id="wf", tasks=(task,))
 
     with pytest.raises(MissingAcquireUnitError, match="Acquire orphan"):
-        compiled.fingerprint
+        _ = compiled.fingerprint

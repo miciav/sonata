@@ -240,7 +240,12 @@ In `src/sonata_engine/workflow/__init__.py`, add the import and the `__all__` en
 
 ```python
 from sonata_engine.workflow.events import WorkflowContext, WorkflowEvent, WorkflowSink
-from sonata_engine.workflow.models import TaskDefinition, TaskRun, WorkflowRun, WorkflowState
+from sonata_engine.workflow.models import (
+    TaskDefinition,
+    TaskRun,
+    WorkflowRun,
+    WorkflowState,
+)
 from sonata_engine.workflow.reporting import subtask
 
 __all__ = [

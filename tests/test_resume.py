@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -26,7 +26,11 @@ from sonata_engine.workflow.events import WorkflowEvent
 
 class _Tracker(Task[None]):
     def __init__(
-        self, title: str, *, idempotent: bool = False, evidence: tuple[Evidence, ...] = ()
+        self,
+        title: str,
+        *,
+        idempotent: bool = False,
+        evidence: tuple[Evidence, ...] = (),
     ) -> None:
         self.title = title
         self.idempotent = idempotent
@@ -97,10 +101,11 @@ def _seed(
         "started_at": "2026-01-01T00:00:00Z",
         "finished_at": None if status == "started" else "2026-01-01T00:00:01Z",
         "evidence": [
-            {"kind": e.kind, "reference": e.reference, "digest": e.digest} for e in evidence
+            {"kind": e.kind, "reference": e.reference, "digest": e.digest}
+            for e in evidence
         ],
     }
-    with open(path, "a", encoding="utf-8") as handle:
+    with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
 
 
@@ -113,7 +118,7 @@ def _fingerprint(task: Task[None]) -> str:
 def _run(task: Task[None], config: JournalConfig, **kwargs: object) -> None:
     workflow = Workflow(workflow_id="wf")
     workflow.add(task)
-    workflow.run( journal=config, **kwargs)  # type: ignore[arg-type]
+    workflow.run(journal=config, **kwargs)  # type: ignore[arg-type]
 
 
 # --- Resume matrix -----------------------------------------------------------
@@ -353,7 +358,7 @@ def test_non_idempotent_acquire_never_retries_ambiguous_state(
     )
 
     with pytest.raises(AmbiguousTaskStateError):
-        workflow.run( journal=config, resume=True)
+        workflow.run(journal=config, resume=True)
 
     assert calls == []
 
@@ -385,8 +390,11 @@ def test_idempotent_acquire_retries_ambiguous_state(
 
 
 def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
-    """Matches "passed non-reusable tasks run again": a resource is never
-    journal-skipped just because it was successfully acquired in a prior run."""
+    """Rerun an acquire task that passed in a prior run.
+
+    Matches "passed non-reusable tasks run again": a resource is never
+    journal-skipped just because it was successfully acquired in a prior run.
+    """
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     calls: list[str] = []
     resource = Resource(
@@ -403,7 +411,7 @@ def test_acquire_passed_always_reruns(tmp_path: Path) -> None:
         workflow_fingerprint=workflow.compile().fingerprint,
     )
 
-    workflow.run( journal=config, resume=True)
+    workflow.run(journal=config, resume=True)
 
     assert "acquire" in calls
 
@@ -443,7 +451,7 @@ def test_release_journal_failure_does_not_mask_main_error_or_abort_cleanup(
     monkeypatch.setattr(Journal, "record_started", _flaky_record_started)
 
     with pytest.raises(RuntimeError, match="consume failed"):
-        workflow.run( journal=config)
+        workflow.run(journal=config)
 
     assert "release" in calls  # cleanup still ran despite the journal write failure
 
@@ -526,7 +534,7 @@ def test_resume_without_journal_raises() -> None:
     workflow.add(_Tracker("Build"))
 
     with pytest.raises(ResumeConfigurationError):
-        workflow.run( resume=True)
+        workflow.run(resume=True)
 
 
 def test_schema_v1_is_rejected(tmp_path: Path) -> None:
@@ -539,9 +547,12 @@ def test_schema_v1_is_rejected(tmp_path: Path) -> None:
 
 
 def test_non_resume_run_warns_on_fingerprint_mismatch(tmp_path: Path) -> None:
-    """A non-resume run against a journal from a different (e.g. pre-upgrade)
+    """Warn instead of raising on a topology mismatch in a non-resume run.
+
+    A non-resume run against a journal from a different (e.g. pre-upgrade)
     topology doesn't raise -- but it must not stay silent either: it ignores the
-    stale records and appends a new topology into the same file."""
+    stale records and appends a new topology into the same file.
+    """
     config = JournalConfig(path=tmp_path / "journal.jsonl")
     task = _Tracker("Build")
     _seed(
