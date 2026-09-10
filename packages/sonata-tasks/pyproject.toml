@@ -25,7 +25,7 @@ azure = [
     "shellcraft @ git+https://github.com/miciav/shellcraft.git@9f2726ac31ab5bdcbf9a378f1cc4d99bdb5090c0",
 ]
 proxmox = [
-    "proxmox-sdk @ git+https://github.com/miciav/proxmox-sdk.git@9e2070384c92a03dffdfb3ac7e248f0861cb0537",
+    "proxmox-sdk @ git+https://github.com/miciav/proxmox-sdk.git@b82c68c3ed5ecfdb9b90c047bb43df4749dd9817",
     "pydantic>=2.9.2",
     "shellcraft @ git+https://github.com/miciav/shellcraft.git@9f2726ac31ab5bdcbf9a378f1cc4d99bdb5090c0",
 ]
