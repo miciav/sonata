@@ -285,12 +285,30 @@ artifacts must be verified by an injected downstream verifier.
 
 ## Development
 
+The repository is a uv workspace of two packages, so most checks run per package
+rather than over the whole tree:
+
 ```bash
-uv sync --dev
-uv run pytest
-uv run ruff check --no-cache .
-uv run basedpyright
+uv sync --all-packages --all-groups --all-extras   # install the whole workspace
+
+# Engine
+uv run pytest -c pyproject.toml tests
+uv run ruff check src tests
+uv run basedpyright --project .
+
+# Catalogue
+uv run pytest -c packages/sonata-tasks/pyproject.toml packages/sonata-tasks/tests
+uv run ruff check --config packages/sonata-tasks/pyproject.toml packages/sonata-tasks
+uv run basedpyright --project packages/sonata-tasks
+uv run lint-imports --config packages/sonata-tasks/.importlinter --no-cache
+
+# Everything CI runs, in one go
+uv run pre-commit run --all-files
 ```
+
+ruff, basedpyright, bandit and import-linter are all wired into pre-commit, so
+local and CI results cannot drift, and `pytest` enforces the coverage gate
+declared in `[tool.coverage.report]`.
 
 The v2 design and nanoFaaS migration sequence are documented in
 [`docs/plans/2026-07-24-release-on-workflow-engine.md`](docs/plans/2026-07-24-release-on-workflow-engine.md).
