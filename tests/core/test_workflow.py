@@ -8,12 +8,14 @@ import pytest
 from sonata_engine import subtask
 from sonata_engine.core.inputs import TaskInputs
 from sonata_engine.core.outcome import TaskOutcome
+from sonata_engine.core.resource_task import Resource
 from sonata_engine.core.selection import Selection
 from sonata_engine.core.task import ReusableTask, Task
 from sonata_engine.core.workflow import Workflow
 from sonata_engine.errors import InvalidTaskOutcomeError
 from sonata_engine.workflow.context import bind_workflow_sink
 from sonata_engine.workflow.events import WorkflowEvent
+from sonata_engine.workflow.observers import WorkflowCompletion
 
 
 class _NoopTask(Task[None]):
@@ -174,6 +176,49 @@ class _BadReusableValue(ReusableTask):
 
     def run(self, inputs: TaskInputs) -> TaskOutcome[None]:
         return TaskOutcome(value=42)  # type: ignore[arg-type]
+
+
+class _RecordingObserver:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.completions: list[WorkflowCompletion] = []
+        self._events = events
+
+    def finished(self, completion: WorkflowCompletion) -> None:
+        if self._events is not None:
+            self._events.append("observer")
+        self.completions.append(completion)
+
+
+def test_run_notifies_observer_after_success() -> None:
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_NoopTask("Work"))
+    observer = _RecordingObserver()
+
+    workflow.run(observers=(observer,))
+
+    assert len(observer.completions) == 1
+    completion = observer.completions[0]
+    assert completion.workflow_id == "wf"
+    assert completion.error is None
+    assert completion.finished_at >= completion.started_at
+
+
+def test_run_notifies_observer_after_failure_cleanup() -> None:
+    events: list[str] = []
+    resource = Resource(
+        title="Acquire test resource",
+        acquire=lambda _inputs: None,
+        release=lambda _inputs, _state: events.append("cleanup"),
+    )
+    workflow = Workflow(workflow_id="wf")
+    workflow.add(_BoomTask(), requires=(resource,))
+    observer = _RecordingObserver(events)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        workflow.run(observers=(observer,))
+
+    assert events == ["cleanup", "observer"]
+    assert isinstance(observer.completions[0].error, RuntimeError)
 
 
 def test_run_emits_started_then_passed() -> None:
