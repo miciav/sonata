@@ -38,8 +38,10 @@ from sonata_engine.retention import (
 from sonata_engine.workflow import (
     TaskDefinition,
     TaskRun,
+    WorkflowCompletion,
     WorkflowContext,
     WorkflowEvent,
+    WorkflowObserver,
     WorkflowRun,
     WorkflowSink,
     WorkflowState,
@@ -49,7 +51,7 @@ from sonata_engine.workflow import (
     workflow_log,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "AmbiguousTaskStateError",
@@ -81,8 +83,10 @@ __all__ = [
     "UnsupportedJournalSchemaError",
     "Verifier",
     "Workflow",
+    "WorkflowCompletion",
     "WorkflowContext",
     "WorkflowEvent",
+    "WorkflowObserver",
     "WorkflowResult",
     "WorkflowRun",
     "WorkflowSink",

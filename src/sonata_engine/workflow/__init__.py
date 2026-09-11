@@ -8,13 +8,16 @@ from sonata_engine.workflow.models import (
     WorkflowRun,
     WorkflowState,
 )
+from sonata_engine.workflow.observers import WorkflowCompletion, WorkflowObserver
 from sonata_engine.workflow.reporting import status, subtask, workflow_log
 
 __all__ = [
     "TaskDefinition",
     "TaskRun",
+    "WorkflowCompletion",
     "WorkflowContext",
     "WorkflowEvent",
+    "WorkflowObserver",
     "WorkflowRun",
     "WorkflowSink",
     "WorkflowState",
