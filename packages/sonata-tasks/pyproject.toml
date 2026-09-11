@@ -6,7 +6,7 @@ version = "0.2.0"
 description = "Reusable task catalogue for the Sonata workflow engine"
 requires-python = ">=3.12"
 dependencies = [
-    "sonata-engine @ git+https://github.com/miciav/sonata.git@e81d559952d4a168edffbe3c7108bd9a017046e9",
+    "sonata-engine @ git+https://github.com/miciav/sonata.git@f26a560efb43e0b00e6b6dca9f2aa035f1a7a174",
 ]
 
 [project.optional-dependencies]
